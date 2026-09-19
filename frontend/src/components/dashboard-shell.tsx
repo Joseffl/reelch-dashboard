@@ -23,7 +23,6 @@ import {
   SearchCheck,
   Settings,
   Scale,
-  ShieldCheck,
   Sparkles,
   TrendingUp,
   UsersRound,
@@ -41,7 +40,6 @@ export type IconName =
   | "discover"
   | "earnings"
   | "verification"
-  | "risk"
   | "ledger"
   | "performance"
   | "withdrawals"
@@ -60,7 +58,6 @@ const icons: Record<IconName, LucideIcon> = {
   discover: Compass,
   earnings: BadgeDollarSign,
   verification: FileCheck2,
-  risk: ShieldCheck,
   ledger: CreditCard,
   performance: TrendingUp,
   withdrawals: HandCoins,
@@ -137,7 +134,7 @@ function SidebarContent({ role, accent, navigation, userEmail, onLogout, onNavig
         <ul className="space-y-1.5">
           {navigation.map((item) => {
             const Icon = icons[item.icon];
-            const active = item.href === pathname || (item.href !== `/${role.toLowerCase()}` && pathname.startsWith(`${item.href}/`));
+            const active = item.href === pathname || (item.href !== `/${rolePath}` && pathname.startsWith(`${item.href}/`));
             return (
               <li key={item.label}>
                 <Link
@@ -178,7 +175,7 @@ function SidebarContent({ role, accent, navigation, userEmail, onLogout, onNavig
   );
 }
 
-export function DashboardShell({ role, title, description, accent, navigation, children }: {
+export function DashboardShell({ role, title, accent, navigation, children }: {
   role: string;
   title: string;
   description: string;
@@ -279,15 +276,12 @@ export function DashboardShell({ role, title, description, accent, navigation, c
       )}
 
       <main className="min-w-0">
-        <div className="mx-auto w-full max-w-[1500px] px-4 py-7 sm:px-7 sm:py-10 lg:px-10 lg:py-12 xl:px-14">
-          <div className="flex flex-col gap-5 border-b border-black/10 pb-8 sm:flex-row sm:items-end sm:justify-between lg:pb-10">
-            <div className="min-w-0">
-              <h1 className="max-w-4xl text-[clamp(2.35rem,5vw,4.5rem)] font-black leading-[0.94] tracking-[-0.06em]">{title}</h1>
-              <p className="mt-5 max-w-3xl text-[0.95rem] leading-7 text-black/56 sm:text-base">{description}</p>
-            </div>
+        <div className="mx-auto w-full max-w-[1500px] px-4 py-6 sm:px-7 sm:py-8 lg:px-10 lg:py-9 xl:px-14">
+          <div className="border-b border-black/10 pb-5 sm:pb-6">
+            <h1 className="text-2xl font-black tracking-[-0.035em] sm:text-3xl">{title}</h1>
           </div>
           {user.verificationStatus && user.verificationStatus !== "approved" && <div className={`mt-6 flex flex-col gap-3 rounded-2xl border px-5 py-4 sm:flex-row sm:items-center sm:justify-between ${user.verificationStatus === "pending" ? "border-amber-200 bg-amber-50" : "border-violet-200 bg-violet-50"}`}><div><p className="text-sm font-black">{user.verificationStatus === "pending" ? "Your account is being verified" : "Your verification needs attention"}</p><p className="mt-1 text-xs leading-5 text-black/55">{user.verificationStatus === "pending" ? "You can explore your workspace while Reelch reviews your details. Restricted actions unlock after approval." : "Review your onboarding details and submit the requested updates."}</p></div>{user.verificationStatus !== "pending" && <Link href={`/${role === "Business" ? "onboarding/business" : "onboarding/promoter"}`} className="text-xs font-bold underline underline-offset-4">Review details</Link>}</div>}
-          <div className="mt-7 lg:mt-9">{children}</div>
+          <div className="mt-6 lg:mt-7">{children}</div>
         </div>
       </main>
     </div>

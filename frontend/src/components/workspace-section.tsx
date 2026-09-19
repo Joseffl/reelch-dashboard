@@ -15,7 +15,6 @@ const descriptions: Record<string, { title: string; description: string }> = {
   earnings: { title: "Earnings", description: "See verified earnings and the ledger movements behind the available balance." },
   withdrawals: { title: "Withdrawals", description: "Request, review, and reconcile promoter payouts without double spending." },
   verifications: { title: "Verification queue", description: "Review business and promoter evidence and record accountable decisions." },
-  risk: { title: "Risk center", description: "Investigate conversion anomalies and unresolved fraud signals." },
   ledger: { title: "Platform ledger", description: "Audit balanced financial transactions and immutable correcting entries." },
 };
 
@@ -24,8 +23,7 @@ export function WorkspaceSection({ workspace, section }: { workspace: keyof type
   if (!copy) return null;
   return <DashboardShell {...workspaceCopy[workspace]} title={copy.title} description={copy.description}>
     <section className="overflow-hidden rounded-2xl border border-black/[0.08] bg-white shadow-[0_12px_45px_rgba(21,23,15,0.05)]">
-      <div className="border-b border-black/[0.08] px-6 py-5"><h2 className="text-lg font-black tracking-tight">{copy.title} workspace</h2></div>
-      <div className="grid min-h-64 place-items-center p-8 text-center"><div><p className="text-sm font-bold">No records yet</p><p className="mt-2 max-w-md text-sm leading-6 text-black/48">This route is connected to the correct role workspace and ready for its API-backed table or workflow.</p></div></div>
+      <div className="grid min-h-64 place-items-center p-8 text-center"><p className="text-sm font-bold">No records yet</p></div>
     </section>
   </DashboardShell>;
 }

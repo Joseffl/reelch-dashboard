@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowLeft, ArrowRight, Building2, Check, Eye, EyeOff, LockKeyhole, Mail, UserRound } from "lucide-react";
+import { ArrowLeft, ArrowRight, Building2, Eye, EyeOff, LockKeyhole, Mail, UserRound } from "lucide-react";
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 
@@ -102,10 +102,10 @@ export default function RegisterPage() {
               <span className="grid size-12 shrink-0 place-items-center rounded-xl bg-violet-300"><UserRound className="size-5" /></span>
               <span><span className="flex items-center gap-2 text-lg font-black">Promoter <ArrowRight className="size-4 opacity-35 transition group-hover:translate-x-1 group-hover:opacity-100" /></span><span className="mt-2 block text-sm leading-6 text-black/50">Promote campaigns, prove results, and earn.</span></span>
             </button>
-            <div className="mt-2 space-y-2 text-xs text-black/42">
+            {/* <div className="mt-2 space-y-2 text-xs text-black/42">
               <p className="flex gap-2"><Check className="size-4 text-[#6558ff]" /> One account can gain additional roles later.</p>
               <p className="flex gap-2"><Check className="size-4 text-[#6558ff]" /> Your progress is saved as you complete onboarding.</p>
-            </div>
+            </div> */}
           </div>}
 
           {role && <form onSubmit={submit} className="mt-7 space-y-4">

@@ -5,9 +5,10 @@ import { DatabaseModule } from './database/database.module.js';
 import { AuthModule } from './auth/auth.module.js';
 import { OnboardingModule } from './onboarding/onboarding.module.js';
 import { PlatformModule } from './platform/platform.module.js';
+import { WaitlistModule } from './waitlist/waitlist.module.js';
 
 @Module({
-  imports: [DatabaseModule, AuthModule, OnboardingModule, PlatformModule],
+  imports: [DatabaseModule, AuthModule, OnboardingModule, PlatformModule, WaitlistModule],
   controllers: [AppController],
   providers: [AppService],
 })

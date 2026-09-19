@@ -15,6 +15,24 @@ const goals = ["Drive sign-ups", "Generate leads", "Increase visibility", "Promo
 const niches = ["Beauty", "Business", "Education", "Entertainment", "Fashion", "Finance", "Fitness", "Food", "Gaming", "Lifestyle", "Music", "Sports", "Technology", "Travel"];
 const platforms = ["Instagram", "TikTok", "X", "YouTube", "WhatsApp", "Phone number", "Facebook", "LinkedIn", "Other"];
 
+function completedOnboardingStep(status: Status) {
+  const profile = status.profile;
+  if (status.role === "business") {
+    const profileComplete = ["name", "industry", "phone", "country", "address"].every((field) => String(profile[field] ?? "").trim());
+    if (!profileComplete) return 0;
+    const goalsComplete = String(profile.registrationNumber ?? "").trim() && Array.isArray(profile.campaignGoals) && profile.campaignGoals.length > 0;
+    if (!goalsComplete) return 1;
+    const documentKinds = new Set(status.documents.map((document) => document.kind));
+    return documentKinds.has("business_registration") && documentKinds.has("representative_id") ? 3 : 2;
+  }
+
+  const profileComplete = ["username", "bio", "phone", "country", "city"].every((field) => String(profile[field] ?? "").trim())
+    && Array.isArray(profile.niches) && profile.niches.length > 0;
+  if (!profileComplete) return 0;
+  if (!status.socials?.length) return 1;
+  return status.documents.some((document) => document.kind === "government_id") ? 3 : 2;
+}
+
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${apiUrl}${path}`, { credentials: "include", ...init, headers: { "content-type": "application/json", ...init?.headers } });
   const result = await response.json().catch(() => ({})) as T & { message?: string };
@@ -52,10 +70,21 @@ export function OnboardingFlow({ role }: { role: Role }) {
   useEffect(() => {
     api<Status>("/onboarding/status").then((data) => {
       if (data.role !== role) return router.replace(`/onboarding/${data.role}`);
-      if (data.profile.onboardingCompletedAt && ["pending", "approved"].includes(data.verification.status)) return router.replace(`/${role}`);
+      if (data.profile.onboardingCompletedAt && ["pending", "approved"].includes(data.verification.status)) {
+        sessionStorage.removeItem(`reelch:onboarding-step:${role}`);
+        return router.replace(`/${role}`);
+      }
+      const furthestStep = completedOnboardingStep(data);
+      const rememberedValue = sessionStorage.getItem(`reelch:onboarding-step:${role}`);
+      const rememberedStep = rememberedValue === null ? null : Number(rememberedValue);
+      setStep(rememberedStep !== null && Number.isInteger(rememberedStep) && rememberedStep >= 0 ? Math.min(rememberedStep, furthestStep) : furthestStep);
       setStatus(data);
     }).catch(() => router.replace(`/login?next=/onboarding/${role}`));
   }, [role, router]);
+
+  useEffect(() => {
+    if (status) sessionStorage.setItem(`reelch:onboarding-step:${role}`, String(step));
+  }, [role, status, step]);
 
   async function saveProfile(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setBusy(true); setError("");
@@ -93,7 +122,7 @@ export function OnboardingFlow({ role }: { role: Role }) {
 
   async function submit() {
     setBusy(true); setError("");
-    try { await api("/onboarding/submit", { method: "POST", body: "{}" }); setSubmitted(true); setBusy(false); }
+    try { await api("/onboarding/submit", { method: "POST", body: "{}" }); sessionStorage.removeItem(`reelch:onboarding-step:${role}`); setSubmitted(true); setBusy(false); }
     catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to submit verification"); setBusy(false); }
   }
 

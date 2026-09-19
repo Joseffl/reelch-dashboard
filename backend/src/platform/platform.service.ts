@@ -86,10 +86,10 @@ export class PlatformService {
     if (business.verificationStatus !== 'approved') throw new ForbiddenException('Business verification is required');
     const [campaign] = await this.database.db.insert(campaigns).values({
       businessId: business.id, title: input.title.trim(), description: input.description.trim(),
-      conversionType: input.conversionType?.trim() || 'signup_completed',
+      conversionType: input.conversionType?.trim() || 'visibility',
       unitPriceKobo: input.unitPriceKobo, targetQuantity: input.targetQuantity,
       budgetKobo: input.unitPriceKobo * input.targetQuantity,
-      targeting: { ...input.targeting, destinationUrl: input.destinationUrl },
+      targeting: { ...input.targeting, country: 'Nigeria', objective: 'visibility', destinationUrl: input.destinationUrl },
       startsAt: input.startsAt ? new Date(input.startsAt) : undefined, endsAt: input.endsAt ? new Date(input.endsAt) : undefined,
     }).returning();
     await this.audit(user, 'campaign.created', 'campaign', campaign.id);
@@ -153,7 +153,7 @@ export class PlatformService {
     const [updated] = await this.database.db.update(campaigns).set({
       title: input.title?.trim() ?? campaign.title, description: input.description?.trim() ?? campaign.description,
       conversionType: input.conversionType?.trim() ?? campaign.conversionType, unitPriceKobo, targetQuantity,
-      budgetKobo: unitPriceKobo * targetQuantity, targeting: { ...(campaign.targeting as Record<string, unknown>), ...input.targeting, destinationUrl },
+      budgetKobo: unitPriceKobo * targetQuantity, targeting: { ...(campaign.targeting as Record<string, unknown>), ...input.targeting, country: 'Nigeria', objective: 'visibility', destinationUrl },
       startsAt: input.startsAt ? new Date(input.startsAt) : campaign.startsAt, endsAt: input.endsAt ? new Date(input.endsAt) : campaign.endsAt,
       status: 'draft', updatedAt: new Date(),
     }).where(eq(campaigns.id, campaignId)).returning();

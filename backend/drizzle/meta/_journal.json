@@ -8,6 +8,13 @@
       "when": 1,
       "tag": "0000_reflective_gladiator",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1789725171973,
+      "tag": "0001_sturdy_drax",
+      "breakpoints": true
     }
   ]
 }

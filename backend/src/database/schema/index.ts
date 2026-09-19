@@ -26,6 +26,20 @@ export const users = pgTable('users', {
   ...timestamps,
 }, (t) => [uniqueIndex('users_email_unique').on(t.email)]);
 
+export const promoterWaitlist = pgTable('promoter_waitlist', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  fullName: text('full_name').notNull(),
+  email: text('email').notNull(),
+  phone: text('phone').notNull(),
+  country: text('country').notNull(),
+  primaryPlatform: text('primary_platform').notNull(),
+  profileUrl: text('profile_url').notNull(),
+  audienceSize: integer('audience_size'),
+  niches: jsonb('niches').$type<string[]>().notNull().default([]),
+  status: text('status').notNull().default('pending'),
+  ...timestamps,
+}, (t) => [uniqueIndex('promoter_waitlist_email_unique').on(t.email)]);
+
 export const userRoles = pgTable('user_roles', {
   userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
   role: roleEnum('role').notNull(),

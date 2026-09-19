@@ -5,7 +5,7 @@ import { AdminVerificationQueue } from "@/components/admin-verification-queue";
 import { AdminCampaigns } from "@/components/admin-campaigns";
 import { workspaceCopy } from "@/lib/workspaces";
 
-const sections = new Set(["verifications", "campaigns", "proofs", "withdrawals", "disputes", "risk", "analytics", "ledger", "notifications", "profile", "settings"]);
+const sections = new Set(["verifications", "campaigns", "proofs", "withdrawals", "disputes", "analytics", "ledger", "notifications", "profile", "settings"]);
 export default async function AdminSection({ params }: { params: Promise<{ section: string }> }) {
   const { section } = await params;
   if (!sections.has(section)) notFound();

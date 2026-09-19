@@ -18,6 +18,14 @@ export class R2StorageService {
     return new S3Client({
       region: 'auto',
       endpoint: `https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+      // R2's S3 endpoint addresses buckets as /<bucket>/<key>. Without this,
+      // the AWS SDK can generate <bucket>.<account>.r2... URLs that do not
+      // resolve and surface in the browser as a 403/CORS-style upload failure.
+      forcePathStyle: true,
+      // Recent AWS SDK releases add an empty-body CRC32 checksum to presigned
+      // PutObject requests by default. The browser subsequently sends the real
+      // file body, which R2 rejects because it does not match that checksum.
+      requestChecksumCalculation: 'WHEN_REQUIRED',
       credentials: { accessKeyId: R2_ACCESS_KEY_ID, secretAccessKey: R2_SECRET_ACCESS_KEY },
     });
   }
