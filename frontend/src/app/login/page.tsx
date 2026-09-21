@@ -16,10 +16,13 @@ export default function LoginPage() {
     setError("");
     setLoading(true);
     const data = new FormData(event.currentTarget);
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 15_000);
     try {
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000/api/v1"}/auth/login`, {
         method: "POST",
         credentials: "include",
+        signal: controller.signal,
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ email: data.get("email"), password: data.get("password") }),
       });
@@ -34,8 +37,14 @@ export default function LoginPage() {
       router.replace(requested?.startsWith("/") ? requested : defaultRoute);
       router.refresh();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Unable to sign in");
+      setError(reason instanceof DOMException && reason.name === "AbortError"
+        ? "This is taking longer than expected. Please try again."
+        : reason instanceof TypeError
+          ? "We could not sign you in. Check your connection and try again."
+          : reason instanceof Error ? reason.message : "Unable to sign in");
       setLoading(false);
+    } finally {
+      window.clearTimeout(timeout);
     }
   }
 
@@ -55,7 +64,7 @@ export default function LoginPage() {
           <Link href="/" className="text-xl font-black tracking-[-0.08em] lg:hidden">REELCH<span className="text-[#6558ff]">.</span></Link>
           <p className="mt-12 text-xs font-bold uppercase tracking-[0.18em] text-[#6558ff] lg:mt-0">Welcome back</p>
           <h2 className="mt-3 text-4xl font-black tracking-[-0.05em]">Sign in to Reelch</h2>
-          <p className="mt-3 text-sm leading-6 text-black/50">Use the account created for your workspace.</p>
+          {/* <p className="mt-3 text-sm leading-6 text-black/50">Use the account created for your workspace.</p> */}
 
           <form onSubmit={submit} className="mt-9 space-y-5">
             <label className="block text-sm font-bold">
