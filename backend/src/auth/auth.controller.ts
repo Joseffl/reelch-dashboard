@@ -26,7 +26,7 @@ export class AuthController {
 
   @Post('logout')
   logout(@Res({ passthrough: true }) response: Response) {
-    response.clearCookie('reelch_session', { httpOnly: true, sameSite: 'lax', path: '/' });
+    response.clearCookie('reelch_session', this.cookieOptions());
     return { success: true };
   }
 
@@ -37,11 +37,18 @@ export class AuthController {
 
   private setSessionCookie(response: Response, token: string) {
     response.cookie('reelch_session', token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      path: '/',
+      ...this.cookieOptions(),
       maxAge: 12 * 60 * 60 * 1000,
     });
+  }
+
+  private cookieOptions() {
+    const production = process.env.NODE_ENV === 'production';
+    return {
+      httpOnly: true,
+      secure: production,
+      sameSite: production ? 'none' as const : 'lax' as const,
+      path: '/',
+    };
   }
 }
