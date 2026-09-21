@@ -14,7 +14,7 @@ describe('AppController (e2e)', () => {
     }).compile();
 
     app = moduleFixture.createNestApplication();
-    configureApp(app, { frontendUrl: 'http://localhost:3000' });
+    configureApp(app, { frontendUrl: 'http://localhost:3000', nodeEnv: 'test' });
     await app.init();
   });
 

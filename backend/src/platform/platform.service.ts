@@ -7,13 +7,15 @@ import {
   campaignStatusHistory, conversions, fraudFlags, ledgerEntries, ledgerTransactions,
   disputeEvidence, disputes, inboundWebhookEvents, notifications, payoutAccounts, proofSubmissions,
   paymentAttempts, promoterApplications, promoters, referralLinks, socialAccounts, trackingEvents, users, verificationDocuments, verificationRequests,
-  verificationResults, wallets, withdrawals,
+  verificationResults, virtualAccounts, wallets, withdrawals,
 } from '../database/schema/index.js';
 import type { AuthenticatedUser } from '../auth/auth.types.js';
 import { R2StorageService } from '../storage/r2-storage.service.js';
 import { PaystackService, type PaystackVerification } from './paystack.service.js';
 
 type CreateCampaign = { title: string; description: string; unitPriceKobo: number; targetQuantity: number; targeting?: Record<string, unknown>; destinationUrl: string; conversionType?: string; startsAt?: string; endsAt?: string };
+const campaignCategories = new Set(['Beauty', 'Business', 'Education', 'Entertainment', 'Fashion', 'Finance', 'Fitness', 'Food', 'Gaming', 'Lifestyle', 'Music', 'Sports', 'Technology', 'Travel']);
+const campaignLocations = new Set(['Anywhere in Nigeria', 'Abia', 'Adamawa', 'Akwa Ibom', 'Anambra', 'Bauchi', 'Bayelsa', 'Benue', 'Borno', 'Cross River', 'Delta', 'Ebonyi', 'Edo', 'Ekiti', 'Enugu', 'Federal Capital Territory', 'Gombe', 'Imo', 'Jigawa', 'Kaduna', 'Kano', 'Katsina', 'Kebbi', 'Kogi', 'Kwara', 'Lagos', 'Nasarawa', 'Niger', 'Ogun', 'Ondo', 'Osun', 'Oyo', 'Plateau', 'Rivers', 'Sokoto', 'Taraba', 'Yobe', 'Zamfara']);
 
 @Injectable()
 export class PlatformService {
@@ -82,6 +84,8 @@ export class PlatformService {
       throw new BadRequestException('Title, description, positive target, and unit price of at least 100 kobo are required');
     }
     try { new URL(input.destinationUrl); } catch { throw new BadRequestException('A valid destinationUrl is required'); }
+    this.validateCampaignTargeting(input.targeting);
+    this.validateCampaignDates(input.startsAt, input.endsAt);
     const business = await this.businessFor(user.id);
     if (business.verificationStatus !== 'approved') throw new ForbiddenException('Business verification is required');
     const [campaign] = await this.database.db.insert(campaigns).values({
@@ -150,6 +154,8 @@ export class PlatformService {
     const unitPriceKobo = Number(input.unitPriceKobo ?? campaign.unitPriceKobo);
     const targetQuantity = Number(input.targetQuantity ?? campaign.targetQuantity);
     if (!Number.isInteger(unitPriceKobo) || unitPriceKobo < 100 || !Number.isInteger(targetQuantity) || targetQuantity < 1) throw new BadRequestException('A positive target and unit price of at least 100 kobo are required');
+    if (input.targeting) this.validateCampaignTargeting(input.targeting);
+    this.validateCampaignDates(input.startsAt, input.endsAt);
     const [updated] = await this.database.db.update(campaigns).set({
       title: input.title?.trim() ?? campaign.title, description: input.description?.trim() ?? campaign.description,
       conversionType: input.conversionType?.trim() ?? campaign.conversionType, unitPriceKobo, targetQuantity,
@@ -167,7 +173,7 @@ export class PlatformService {
 
   async completeCampaignCreative(user: AuthenticatedUser, campaignId: string, input: { key: string; filename: string; contentType: string; sizeBytes: number; altText?: string }) {
     const campaign = await this.ownedCampaign(user.id, campaignId);
-    if (!['draft', 'rejected'].includes(campaign.status)) throw new ConflictException('Campaign creatives can no longer be changed');
+    if (!['draft', 'rejected'].includes(campaign.status)) throw new ConflictException('Campaign images or videos can no longer be changed');
     await this.storage.assertCampaignUpload(user.id, campaignId, input.key, input.contentType, input.sizeBytes);
     const [creative] = await this.database.db.insert(campaignCreatives).values({ campaignId, storageKey: input.key, originalFilename: input.filename.slice(0, 255), mimeType: input.contentType, sizeBytes: input.sizeBytes, altText: input.altText?.trim() }).returning();
     return creative;
@@ -177,7 +183,7 @@ export class PlatformService {
     const campaign = await this.ownedCampaign(user.id, campaignId);
     if (campaign.status !== 'draft' && campaign.status !== 'rejected') throw new ConflictException('Only draft or rejected campaigns can be submitted');
     const creative = await this.database.db.query.campaignCreatives.findFirst({ where: eq(campaignCreatives.campaignId, campaignId) });
-    if (!creative) throw new BadRequestException('Add at least one campaign creative before submitting');
+    if (!creative) throw new BadRequestException('Add at least one campaign image or video before submitting');
     return this.transition(campaign, 'pending_review', user.id);
   }
 
@@ -208,7 +214,7 @@ export class PlatformService {
 
   async campaignCreativeUrl(campaignId: string, creativeId: string) {
     const creative = await this.database.db.query.campaignCreatives.findFirst({ where: and(eq(campaignCreatives.id, creativeId), eq(campaignCreatives.campaignId, campaignId)) });
-    if (!creative) throw new NotFoundException('Campaign creative not found');
+    if (!creative) throw new NotFoundException('Campaign image or video not found');
     return { url: await this.storage.createReadUrl(creative.storageKey), expiresIn: 300, mimeType: creative.mimeType };
   }
 
@@ -248,6 +254,86 @@ export class PlatformService {
     return { authorizationUrl: initialized.authorization_url, reference: initialized.reference, amountKobo: campaign.budgetKobo, currency: campaign.currency };
   }
 
+  async businessWallet(user: AuthenticatedUser) {
+    const business = await this.businessFor(user.id);
+    const wallet = await this.database.db.query.wallets.findFirst({ where: and(eq(wallets.ownerType, 'business'), eq(wallets.ownerId, business.id)) });
+    if (!wallet) throw new NotFoundException('Business wallet not found');
+    const [account, entries, balanceRows] = await Promise.all([
+      this.database.db.query.virtualAccounts.findFirst({ where: and(eq(virtualAccounts.businessId, business.id), eq(virtualAccounts.provider, 'paystack')) }),
+      this.database.db.select({ direction: ledgerEntries.direction, amountKobo: ledgerEntries.amountKobo, createdAt: ledgerEntries.createdAt, type: ledgerTransactions.type, reference: ledgerTransactions.reference })
+        .from(ledgerEntries).innerJoin(ledgerTransactions, eq(ledgerEntries.transactionId, ledgerTransactions.id))
+        .where(eq(ledgerEntries.walletId, wallet.id)).orderBy(desc(ledgerEntries.createdAt)).limit(50),
+      this.database.db.select({ balance: sql<number>`coalesce(sum(case when ${ledgerEntries.direction} = 'credit' then ${ledgerEntries.amountKobo} else -${ledgerEntries.amountKobo} end), 0)::bigint` }).from(ledgerEntries).where(eq(ledgerEntries.walletId, wallet.id)),
+    ]);
+    const balanceKobo = Number(balanceRows[0]?.balance ?? 0);
+    return { balanceKobo, currency: wallet.currency, account: account ? { accountName: account.accountName, accountNumber: account.accountNumber, bankName: account.bankName, bankSlug: account.bankSlug, currency: account.currency, isActive: account.isActive } : null, entries };
+  }
+
+  async createBusinessVirtualAccount(user: AuthenticatedUser) {
+    const business = await this.businessFor(user.id);
+    const existing = await this.database.db.query.virtualAccounts.findFirst({ where: and(eq(virtualAccounts.businessId, business.id), eq(virtualAccounts.provider, 'paystack')) });
+    if (existing) return existing;
+    const owner = await this.database.db.query.users.findFirst({ where: eq(users.id, user.id) });
+    if (!owner) throw new NotFoundException('Business owner not found');
+    const names = owner.displayName.trim().split(/\s+/);
+    const customer = await this.paystack.createCustomer({ email: owner.email, firstName: names[0] || business.name, lastName: names.slice(1).join(' ') || business.name, phone: business.phone || undefined, businessId: business.id });
+    const assigned = await this.paystack.createDedicatedAccount(customer.customer_code);
+    const [account] = await this.database.db.insert(virtualAccounts).values({
+      businessId: business.id, providerCustomerCode: customer.customer_code, providerAccountId: String(assigned.id),
+      accountName: assigned.account_name, accountNumber: assigned.account_number, bankName: assigned.bank.name,
+      bankSlug: assigned.bank.slug, currency: assigned.currency,
+    }).onConflictDoNothing().returning();
+    return account ?? this.database.db.query.virtualAccounts.findFirst({ where: and(eq(virtualAccounts.businessId, business.id), eq(virtualAccounts.provider, 'paystack')) });
+  }
+
+  async fundCampaignFromWallet(user: AuthenticatedUser, campaignId: string) {
+    const campaign = await this.ownedCampaign(user.id, campaignId);
+    if (campaign.status !== 'funding_required') throw new ConflictException('Campaign is not ready for funding');
+    const business = await this.businessFor(user.id);
+    return this.database.db.transaction(async (tx) => {
+      const businessWallet = await tx.query.wallets.findFirst({ where: and(eq(wallets.ownerType, 'business'), eq(wallets.ownerId, business.id)) });
+      if (!businessWallet) throw new NotFoundException('Business wallet not found');
+      const balances = await tx.select({ balance: sql<number>`coalesce(sum(case when ${ledgerEntries.direction} = 'credit' then ${ledgerEntries.amountKobo} else -${ledgerEntries.amountKobo} end), 0)::bigint` }).from(ledgerEntries).where(eq(ledgerEntries.walletId, businessWallet.id));
+      if (Number(balances[0]?.balance ?? 0) < campaign.budgetKobo) throw new ConflictException('Your wallet balance is not enough to fund this campaign');
+      const [created] = await tx.insert(wallets).values({ ownerType: 'campaign_reserve', ownerId: campaign.id }).onConflictDoNothing().returning();
+      const reserve = created ?? await tx.query.wallets.findFirst({ where: and(eq(wallets.ownerType, 'campaign_reserve'), eq(wallets.ownerId, campaign.id)) });
+      if (!reserve) throw new Error('Unable to create campaign reserve wallet');
+      const [transaction] = await tx.insert(ledgerTransactions).values({ type: 'campaign_funding', reference: campaign.id, idempotencyKey: `wallet-campaign:${campaign.id}` }).returning();
+      await tx.insert(ledgerEntries).values([
+        { transactionId: transaction.id, walletId: businessWallet.id, direction: 'debit', amountKobo: campaign.budgetKobo },
+        { transactionId: transaction.id, walletId: reserve.id, direction: 'credit', amountKobo: campaign.budgetKobo },
+      ]);
+      await tx.insert(campaignReservations).values({ campaignId: campaign.id, walletId: reserve.id, amountKobo: campaign.budgetKobo });
+      await tx.update(campaigns).set({ status: 'live', updatedAt: new Date() }).where(eq(campaigns.id, campaign.id));
+      await tx.insert(campaignStatusHistory).values({ campaignId: campaign.id, fromStatus: campaign.status, toStatus: 'live', actorUserId: user.id });
+      return { campaignId: campaign.id, status: 'live', transactionId: transaction.id };
+    }, { isolationLevel: 'serializable' });
+  }
+
+  async processPaystackWalletDeposit(verified: PaystackVerification) {
+    if (verified.status !== 'success' || !verified.customer?.customer_code || !Number.isInteger(Number(verified.amount)) || Number(verified.amount) <= 0) return { received: true };
+    const account = await this.database.db.query.virtualAccounts.findFirst({ where: and(eq(virtualAccounts.provider, 'paystack'), eq(virtualAccounts.providerCustomerCode, verified.customer.customer_code), eq(virtualAccounts.isActive, true)) });
+    if (!account) return { received: true };
+    return this.database.db.transaction(async (tx) => {
+      const idempotencyKey = `paystack-wallet:${verified.reference}`;
+      const existing = await tx.query.ledgerTransactions.findFirst({ where: eq(ledgerTransactions.idempotencyKey, idempotencyKey) });
+      if (existing) return { received: true, transactionId: existing.id };
+      const wallet = await tx.query.wallets.findFirst({ where: and(eq(wallets.ownerType, 'business'), eq(wallets.ownerId, account.businessId)) });
+      if (!wallet) throw new Error('Business wallet not found');
+      const [clearingCreated] = await tx.insert(wallets).values({ ownerType: 'payment_clearing', ownerId: account.businessId }).onConflictDoNothing().returning();
+      const clearing = clearingCreated ?? await tx.query.wallets.findFirst({ where: and(eq(wallets.ownerType, 'payment_clearing'), eq(wallets.ownerId, account.businessId)) });
+      if (!clearing) throw new Error('Payment clearing wallet not found');
+      const amountKobo = Number(verified.amount);
+      const [transaction] = await tx.insert(ledgerTransactions).values({ type: 'wallet_deposit', reference: verified.reference, idempotencyKey, metadata: { provider: 'paystack', channel: verified.channel } }).returning();
+      await tx.insert(ledgerEntries).values([
+        { transactionId: transaction.id, walletId: clearing.id, direction: 'debit', amountKobo, currency: verified.currency },
+        { transactionId: transaction.id, walletId: wallet.id, direction: 'credit', amountKobo, currency: verified.currency },
+      ]);
+      await this.notify((await tx.query.businesses.findFirst({ where: eq(businesses.id, account.businessId) }))!.ownerUserId, 'wallet_funded', 'Wallet funded', `Your wallet received ₦${(amountKobo / 100).toLocaleString()}.`, { reference: verified.reference, amountKobo });
+      return { received: true, transactionId: transaction.id };
+    });
+  }
+
   async verifyCampaignFunding(user: AuthenticatedUser, campaignId: string, reference: string) {
     await this.ownedCampaign(user.id, campaignId);
     const attempt = await this.database.db.query.paymentAttempts.findFirst({ where: and(eq(paymentAttempts.campaignId, campaignId), eq(paymentAttempts.reference, reference)) });
@@ -262,6 +348,12 @@ export class PlatformService {
     const business = await this.database.db.query.businesses.findFirst({ where: eq(businesses.id, attempt.businessId) });
     if (!business) throw new NotFoundException('Business not found');
     return this.finalizePaystackFunding(reference, await this.paystack.verify(reference), business.ownerUserId);
+  }
+
+  async processPaystackCharge(reference: string) {
+    const attempt = await this.database.db.query.paymentAttempts.findFirst({ where: eq(paymentAttempts.reference, reference) });
+    if (attempt) return this.processPaystackSuccess(reference);
+    return this.processPaystackWalletDeposit(await this.paystack.verify(reference));
   }
 
   private async finalizePaystackFunding(reference: string, verified: PaystackVerification, actorUserId: string) {
@@ -299,10 +391,20 @@ export class PlatformService {
 
   async discoverCampaigns(user: AuthenticatedUser) {
     const promoter = await this.promoterFor(user.id);
-    return this.database.db.select({ campaign: campaigns, businessName: businesses.name, applicationStatus: promoterApplications.status })
+    const opportunities = await this.database.db.select({ campaign: campaigns, businessName: businesses.name, applicationStatus: promoterApplications.status })
       .from(campaigns).innerJoin(businesses, eq(campaigns.businessId, businesses.id))
       .leftJoin(promoterApplications, and(eq(promoterApplications.campaignId, campaigns.id), eq(promoterApplications.promoterId, promoter.id)))
       .where(eq(campaigns.status, 'live')).orderBy(desc(campaigns.createdAt));
+    const niches = new Set(promoter.niches.map(value => value.toLowerCase()));
+    const location = promoter.city?.trim().toLowerCase();
+    return opportunities.filter(({ campaign }) => {
+      const targeting = campaign.targeting as Record<string, unknown>;
+      const category = typeof targeting.category === 'string' ? targeting.category.toLowerCase() : '';
+      const targetLocation = typeof targeting.location === 'string' ? targeting.location.toLowerCase() : 'anywhere in nigeria';
+      const categoryMatches = !category || niches.has(category);
+      const locationMatches = targetLocation === 'anywhere in nigeria' || (!!location && location === targetLocation);
+      return categoryMatches && locationMatches;
+    });
   }
 
   async apply(user: AuthenticatedUser, campaignId: string, message?: string) {
@@ -548,6 +650,19 @@ export class PlatformService {
   async storeWebhookReceipt(input: { provider: string; externalId: string; eventType: string; payloadHash: string }) {
     const [event] = await this.database.db.insert(inboundWebhookEvents).values(input).onConflictDoNothing().returning();
     return event ?? this.database.db.query.inboundWebhookEvents.findFirst({ where: and(eq(inboundWebhookEvents.provider, input.provider), eq(inboundWebhookEvents.externalId, input.externalId)) });
+  }
+
+  private validateCampaignTargeting(targeting?: Record<string, unknown>) {
+    const category = typeof targeting?.category === 'string' ? targeting.category.trim() : '';
+    const location = typeof targeting?.location === 'string' ? targeting.location.trim() : '';
+    if (!campaignCategories.has(category)) throw new BadRequestException('Select a valid campaign category');
+    if (!campaignLocations.has(location)) throw new BadRequestException('Select a valid promoter location');
+  }
+  private validateCampaignDates(startsAt?: string, endsAt?: string) {
+    if (!startsAt && !endsAt) return;
+    const start = startsAt ? new Date(startsAt) : null; const end = endsAt ? new Date(endsAt) : null;
+    if ((start && Number.isNaN(start.getTime())) || (end && Number.isNaN(end.getTime()))) throw new BadRequestException('Enter valid campaign dates');
+    if (start && end && end <= start) throw new BadRequestException('The end date must be after the start date');
   }
 
   private async businessFor(userId: string) {

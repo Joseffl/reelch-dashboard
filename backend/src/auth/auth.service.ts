@@ -3,8 +3,8 @@ import { JwtService } from '@nestjs/jwt';
 import { compare, hash } from 'bcryptjs';
 import { eq } from 'drizzle-orm';
 import { DatabaseService } from '../database/database.service.js';
-import { businesses, promoters, userRoles, users, verificationRequests, wallets } from '../database/schema/index.js';
-import type { ReelchRole } from './auth.types.js';
+import { businesses, promoters, socialAccounts, userRoles, users, verificationRequests, wallets } from '../database/schema/index.js';
+import type { AuthenticatedUser, ReelchRole } from './auth.types.js';
 
 type RegisterInput = {
   email: string;
@@ -58,6 +58,50 @@ export class AuthService {
     }
     const roles = await this.database.db.select({ role: userRoles.role }).from(userRoles).where(eq(userRoles.userId, user.id));
     return this.issueToken(user.id, user.email, roles.map(({ role }) => role));
+  }
+
+  async profile(authenticated: AuthenticatedUser) {
+    const user = await this.database.db.query.users.findFirst({ where: eq(users.id, authenticated.id) });
+    if (!user) throw new UnauthorizedException('Account not found');
+    const roles = await this.database.db.select({ role: userRoles.role }).from(userRoles).where(eq(userRoles.userId, user.id));
+    const roleNames = roles.map(({ role }) => role);
+    if (roleNames.includes('business')) {
+      const roleProfile = await this.database.db.query.businesses.findFirst({ where: eq(businesses.ownerUserId, user.id) });
+      return { user: { id: user.id, email: user.email, displayName: user.displayName, isActive: user.isActive, createdAt: user.createdAt }, roles: roleNames, role: 'business', roleProfile, socials: [] };
+    }
+    if (roleNames.includes('promoter')) {
+      const roleProfile = await this.database.db.query.promoters.findFirst({ where: eq(promoters.userId, user.id) });
+      const socials = roleProfile ? await this.database.db.select().from(socialAccounts).where(eq(socialAccounts.promoterId, roleProfile.id)) : [];
+      return { user: { id: user.id, email: user.email, displayName: user.displayName, isActive: user.isActive, createdAt: user.createdAt }, roles: roleNames, role: 'promoter', roleProfile, socials };
+    }
+    return { user: { id: user.id, email: user.email, displayName: user.displayName, isActive: user.isActive, createdAt: user.createdAt }, roles: roleNames, role: 'admin', roleProfile: null, socials: [] };
+  }
+
+  async updateProfile(authenticated: AuthenticatedUser, input: Record<string, unknown>) {
+    const displayName = typeof input.displayName === 'string' ? input.displayName.trim() : undefined;
+    if (displayName !== undefined && !displayName) throw new ConflictException('Display name cannot be empty');
+    if (displayName) await this.database.db.update(users).set({ displayName, updatedAt: new Date() }).where(eq(users.id, authenticated.id));
+
+    if (authenticated.roles.includes('business')) {
+      const values = this.pickStrings(input, ['name', 'website', 'phone', 'description']);
+      if (values.name === '') throw new ConflictException('Business name cannot be empty');
+      if (Object.keys(values).length) await this.database.db.update(businesses).set({ ...values, updatedAt: new Date() }).where(eq(businesses.ownerUserId, authenticated.id));
+    }
+    if (authenticated.roles.includes('promoter')) {
+      const values = this.pickStrings(input, ['username', 'bio', 'phone', 'city']);
+      const niches = Array.isArray(input.niches) ? input.niches.map(String).map((item) => item.trim()).filter(Boolean) : undefined;
+      if (values.username === '') throw new ConflictException('Username cannot be empty');
+      if (values.username) {
+        const existing = await this.database.db.query.promoters.findFirst({ where: eq(promoters.username, values.username) });
+        if (existing && existing.userId !== authenticated.id) throw new ConflictException('That username is already in use');
+      }
+      await this.database.db.update(promoters).set({ ...values, ...(niches ? { niches } : {}), updatedAt: new Date() }).where(eq(promoters.userId, authenticated.id));
+    }
+    return this.profile(authenticated);
+  }
+
+  private pickStrings(input: Record<string, unknown>, keys: string[]) {
+    return Object.fromEntries(keys.flatMap((key) => typeof input[key] === 'string' ? [[key, input[key].trim()]] : []));
   }
 
   private async issueToken(id: string, email: string, roles: ReelchRole[]) {

@@ -119,6 +119,25 @@ export const wallets = pgTable('wallets', {
   currency: text('currency').notNull().default('NGN'), ...timestamps,
 }, (t) => [uniqueIndex('wallet_owner_currency_unique').on(t.ownerType, t.ownerId, t.currency)]);
 
+export const virtualAccounts = pgTable('virtual_accounts', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  businessId: uuid('business_id').notNull().references(() => businesses.id, { onDelete: 'cascade' }),
+  provider: text('provider').notNull().default('paystack'),
+  providerCustomerCode: text('provider_customer_code').notNull(),
+  providerAccountId: text('provider_account_id').notNull(),
+  accountName: text('account_name').notNull(),
+  accountNumber: text('account_number').notNull(),
+  bankName: text('bank_name').notNull(),
+  bankSlug: text('bank_slug').notNull(),
+  currency: text('currency').notNull().default('NGN'),
+  isActive: boolean('is_active').notNull().default(true),
+  ...timestamps,
+}, (t) => [
+  uniqueIndex('virtual_account_business_provider_unique').on(t.businessId, t.provider),
+  uniqueIndex('virtual_account_provider_customer_unique').on(t.provider, t.providerCustomerCode),
+  uniqueIndex('virtual_account_provider_number_unique').on(t.provider, t.accountNumber),
+]);
+
 export const ledgerTransactions = pgTable('ledger_transactions', {
   id: uuid('id').primaryKey().defaultRandom(), type: text('type').notNull(), reference: text('reference').notNull(),
   idempotencyKey: text('idempotency_key').notNull(), status: ledgerTransactionStatusEnum('status').notNull().default('posted'),

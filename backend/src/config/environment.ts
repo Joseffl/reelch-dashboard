@@ -26,9 +26,10 @@ export function readEnvironment(
     throw new Error('PORT must be an integer between 1 and 65535');
   }
 
-  const frontendUrl = source.FRONTEND_URL ?? 'http://localhost:3000';
+  const frontendUrlValue = source.FRONTEND_URL ?? 'http://localhost:3000';
+  let frontendUrl: string;
   try {
-    new URL(frontendUrl);
+    frontendUrl = new URL(frontendUrlValue).origin;
   } catch {
     throw new Error('FRONTEND_URL must be a valid URL');
   }

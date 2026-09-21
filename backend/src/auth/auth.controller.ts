@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Req, Res } from '@nestjs/common';
+import { Body, Controller, Get, Patch, Post, Req, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { AuthService } from './auth.service.js';
 import { Public } from './auth.decorators.js';
@@ -33,6 +33,16 @@ export class AuthController {
   @Get('me')
   me(@Req() request: AuthenticatedRequest) {
     return request.user;
+  }
+
+  @Get('profile')
+  profile(@Req() request: AuthenticatedRequest) {
+    return this.auth.profile(request.user);
+  }
+
+  @Patch('profile')
+  updateProfile(@Req() request: AuthenticatedRequest, @Body() body: Record<string, unknown>) {
+    return this.auth.updateProfile(request.user, body);
   }
 
   private setSessionCookie(response: Response, token: string) {

@@ -61,6 +61,18 @@ export class PlatformController {
   verifyFunding(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() body: { reference: string }) { return this.platform.verifyCampaignFunding(req.user, id, body.reference); }
 
   @Roles('business')
+  @Get('business/wallet')
+  businessWallet(@Req() req: AuthenticatedRequest) { return this.platform.businessWallet(req.user); }
+
+  @Roles('business')
+  @Post('business/wallet/virtual-account')
+  createVirtualAccount(@Req() req: AuthenticatedRequest) { return this.platform.createBusinessVirtualAccount(req.user); }
+
+  @Roles('business')
+  @Post('business/campaigns/:id/funding/wallet')
+  fundFromWallet(@Req() req: AuthenticatedRequest, @Param('id') id: string) { return this.platform.fundCampaignFromWallet(req.user, id); }
+
+  @Roles('business')
   @Post('business/campaigns/:campaignId/applications/:applicationId/accept')
   accept(@Req() req: AuthenticatedRequest, @Param('campaignId') campaignId: string, @Param('applicationId') applicationId: string, @Body() body: { targetQuantity: number }) {
     return this.platform.acceptPromoter(req.user, campaignId, applicationId, body.targetQuantity);
@@ -209,13 +221,15 @@ export class PlatformController {
 
   @Public()
   @Post('webhooks/paystack')
-  paystackWebhook(@Req() req: RawBodyRequest<Request>, @Headers('x-paystack-signature') signature: string, @Body() body: { event?: string; data?: { reference?: string } }) {
+  async paystackWebhook(@Req() req: RawBodyRequest<Request>, @Headers('x-paystack-signature') signature: string, @Body() body: { event?: string; data?: { reference?: string } }) {
     const raw = req.rawBody; const secret = process.env.PAYSTACK_SECRET_KEY;
     if (!raw || !signature || !secret) throw new UnauthorizedException('Valid Paystack signature required');
     const expected = createHmac('sha512', secret).update(raw).digest('hex');
     const received = Buffer.from(signature);
     if (received.length !== expected.length || !timingSafeEqual(received, Buffer.from(expected))) throw new UnauthorizedException('Valid Paystack signature required');
-    if (body.event === 'charge.success' && body.data?.reference) return this.platform.processPaystackSuccess(body.data.reference);
+    if (body.event === 'charge.success' && body.data?.reference) {
+      return this.platform.processPaystackCharge(body.data.reference);
+    }
     return { received: true };
   }
 }

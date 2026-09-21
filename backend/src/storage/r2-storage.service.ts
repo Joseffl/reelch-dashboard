@@ -54,8 +54,8 @@ export class R2StorageService {
   }
 
   async createCampaignUpload(userId: string, campaignId: string, input: { filename: string; contentType: string; sizeBytes: number }) {
-    if (!creativeTypes.has(input.contentType)) throw new BadRequestException('Campaign creatives must be JPEG, PNG, WebP, or MP4');
-    if (!Number.isInteger(input.sizeBytes) || input.sizeBytes < 1 || input.sizeBytes > 25 * 1024 * 1024) throw new BadRequestException('Campaign creatives must be no larger than 25 MB');
+    if (!creativeTypes.has(input.contentType)) throw new BadRequestException('Campaign files must be JPEG, PNG, WebP, or MP4');
+    if (!Number.isInteger(input.sizeBytes) || input.sizeBytes < 1 || input.sizeBytes > 25 * 1024 * 1024) throw new BadRequestException('Campaign files must be no larger than 25 MB');
     const { client, bucket } = this.configured();
     const extension = input.filename.split('.').pop()?.replace(/[^a-z0-9]/gi, '').toLowerCase() || 'bin';
     const key = `campaigns/${userId}/${campaignId}/${randomUUID()}.${extension}`;
@@ -64,11 +64,11 @@ export class R2StorageService {
   }
 
   async assertCampaignUpload(userId: string, campaignId: string, key: string, contentType: string, sizeBytes: number) {
-    if (!key.startsWith(`campaigns/${userId}/${campaignId}/`)) throw new BadRequestException('Invalid campaign creative key');
-    if (!creativeTypes.has(contentType) || sizeBytes > 25 * 1024 * 1024) throw new BadRequestException('Invalid campaign creative');
+    if (!key.startsWith(`campaigns/${userId}/${campaignId}/`)) throw new BadRequestException('Invalid campaign file key');
+    if (!creativeTypes.has(contentType) || sizeBytes > 25 * 1024 * 1024) throw new BadRequestException('Invalid campaign file');
     const { client, bucket } = this.configured();
     const object = await client.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
-    if (object.ContentType !== contentType || object.ContentLength !== sizeBytes) throw new BadRequestException('Uploaded creative does not match its declaration');
+    if (object.ContentType !== contentType || object.ContentLength !== sizeBytes) throw new BadRequestException('Uploaded file does not match its declaration');
   }
 
   async assertUploaded(userId: string, key: string, contentType: string, sizeBytes: number) {

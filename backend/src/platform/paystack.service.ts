@@ -1,7 +1,9 @@
 import { BadGatewayException, Injectable, ServiceUnavailableException } from '@nestjs/common';
 
 type PaystackResponse<T> = { status: boolean; message: string; data: T };
-export type PaystackVerification = { status: string; reference: string; amount: number; currency: string; paid_at?: string | null; metadata?: Record<string, unknown> | string; channel?: string; gateway_response?: string };
+export type PaystackVerification = { status: string; reference: string; amount: number; currency: string; paid_at?: string | null; metadata?: Record<string, unknown> | string; channel?: string; gateway_response?: string; customer?: { customer_code?: string } };
+export type PaystackCustomer = { id: number; customer_code: string; email: string };
+export type PaystackDedicatedAccount = { id: number; account_name: string; account_number: string; currency: string; bank: { name: string; slug: string }; customer: PaystackCustomer };
 
 @Injectable()
 export class PaystackService {
@@ -20,6 +22,23 @@ export class PaystackService {
   async verify(reference: string) {
     const response = await this.request<PaystackResponse<PaystackVerification>>(`/transaction/verify/${encodeURIComponent(reference)}`, { method: 'GET' });
     if (!response.status || !response.data) throw new BadGatewayException(response.message || 'Paystack could not verify payment');
+    return response.data;
+  }
+  async createCustomer(input: { email: string; firstName: string; lastName: string; phone?: string; businessId: string }) {
+    const body = { email: input.email, first_name: input.firstName, last_name: input.lastName, phone: input.phone, metadata: { businessId: input.businessId, purpose: 'wallet_funding' } };
+    try {
+      const response = await this.request<PaystackResponse<PaystackCustomer>>('/customer', { method: 'POST', body: JSON.stringify(body) });
+      return response.data;
+    } catch {
+      // Paystack returns an error when the email already exists; reuse that customer safely.
+      const response = await this.request<PaystackResponse<PaystackCustomer>>(`/customer/${encodeURIComponent(input.email)}`, { method: 'GET' });
+      return response.data;
+    }
+  }
+  async createDedicatedAccount(customerCode: string) {
+    const preferredBank = this.secretKey.startsWith('sk_test_') ? 'test-bank' : process.env.PAYSTACK_DVA_BANK?.trim() || undefined;
+    const response = await this.request<PaystackResponse<PaystackDedicatedAccount>>('/dedicated_account', { method: 'POST', body: JSON.stringify({ customer: customerCode, preferred_bank: preferredBank }) });
+    if (!response.status || !response.data?.account_number) throw new BadGatewayException(response.message || 'Paystack could not create the account number');
     return response.data;
   }
   private async request<T>(path: string, init: RequestInit): Promise<T> {
