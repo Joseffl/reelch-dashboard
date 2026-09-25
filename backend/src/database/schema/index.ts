@@ -90,6 +90,13 @@ export const socialAccounts = pgTable('social_accounts', {
   dataSource: text('data_source').notNull().default('self_reported'), verifiedAt: timestamp('verified_at', { withTimezone: true }), ...timestamps,
 });
 
+export const socialConnections = pgTable('social_connections', {
+  id: uuid('id').primaryKey().defaultRandom(), promoterId: uuid('promoter_id').notNull().references(() => promoters.id, { onDelete: 'cascade' }),
+  provider: text('provider').notNull(), providerUserId: text('provider_user_id').notNull(), username: text('username').notNull(),
+  accessTokenEncrypted: text('access_token_encrypted'), refreshTokenEncrypted: text('refresh_token_encrypted'), tokenExpiresAt: timestamp('token_expires_at', { withTimezone: true }),
+  scopes: jsonb('scopes').$type<string[]>().notNull().default([]), status: text('status').notNull().default('active'), lastSyncedAt: timestamp('last_synced_at', { withTimezone: true }), ...timestamps,
+}, (t) => [uniqueIndex('social_connection_promoter_provider_unique').on(t.promoterId, t.provider), uniqueIndex('social_connection_provider_user_unique').on(t.provider, t.providerUserId)]);
+
 export const campaigns = pgTable('campaigns', {
   id: uuid('id').primaryKey().defaultRandom(), businessId: uuid('business_id').notNull().references(() => businesses.id),
   title: text('title').notNull(), description: text('description').notNull(), objective: text('objective').notNull().default('acquisition'),
@@ -261,10 +268,18 @@ export const disputeEvidence = pgTable('dispute_evidence', {
 
 export const proofSubmissions = pgTable('proof_submissions', {
   id: uuid('id').primaryKey().defaultRandom(), assignmentId: uuid('assignment_id').notNull().references(() => campaignPromoters.id),
-  promoterId: uuid('promoter_id').notNull().references(() => promoters.id), platform: text('platform').notNull(), storageKey: text('storage_key').notNull(),
+  promoterId: uuid('promoter_id').notNull().references(() => promoters.id), platform: text('platform').notNull(), storageKey: text('storage_key'),
+  submittedUrl: text('submitted_url'), externalPostId: text('external_post_id'), externalAuthorId: text('external_author_id'),
+  verificationMethod: text('verification_method').notNull().default('manual'), automatedChecks: jsonb('automated_checks').$type<Record<string, unknown>>().notNull().default({}),
   claimedViews: integer('claimed_views'), status: proofStatusEnum('status').notNull().default('submitted'),
   reviewedBy: uuid('reviewed_by').references(() => users.id), reviewReason: text('review_reason'), reviewedAt: timestamp('reviewed_at', { withTimezone: true }), ...timestamps,
-}, (t) => [index('proof_status_created_idx').on(t.status, t.createdAt)]);
+}, (t) => [index('proof_status_created_idx').on(t.status, t.createdAt), uniqueIndex('proof_platform_post_unique').on(t.platform, t.externalPostId)]);
+
+export const proofMetricSnapshots = pgTable('proof_metric_snapshots', {
+  id: uuid('id').primaryKey().defaultRandom(), proofSubmissionId: uuid('proof_submission_id').notNull().references(() => proofSubmissions.id, { onDelete: 'cascade' }),
+  views: integer('views'), likes: integer('likes'), comments: integer('comments'), shares: integer('shares'), rawResponseHash: text('raw_response_hash'),
+  capturedAt: timestamp('captured_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [index('proof_metrics_submission_idx').on(t.proofSubmissionId, t.capturedAt)]);
 
 export const notifications = pgTable('notifications', {
   id: uuid('id').primaryKey().defaultRandom(), userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),

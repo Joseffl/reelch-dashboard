@@ -93,6 +93,14 @@ export class PlatformController {
   discover(@Req() req: AuthenticatedRequest) { return this.platform.discoverCampaigns(req.user); }
 
   @Roles('promoter')
+  @Get('promoter/campaigns/:id')
+  promoterCampaign(@Req() req: AuthenticatedRequest, @Param('id') id: string) { return this.platform.promoterCampaignDetail(req.user, id); }
+
+  @Roles('promoter')
+  @Post('promoter/campaigns/:id/join')
+  joinCampaign(@Req() req: AuthenticatedRequest, @Param('id') id: string) { return this.platform.joinCampaign(req.user, id); }
+
+  @Roles('promoter')
   @Post('promoter/campaigns/:id/apply')
   apply(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() body: { message?: string }) { return this.platform.apply(req.user, id, body.message); }
 
@@ -179,10 +187,25 @@ export class PlatformController {
   }
 
   @Roles('promoter')
+  @Get('promoter/proofs')
+  promoterProofs(@Req() req: AuthenticatedRequest) { return this.platform.promoterProofs(req.user); }
+
+  @Roles('promoter')
+  @Post('promoter/assignments/:id/proofs/presign')
+  presignProof(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() body: Parameters<PlatformService['presignProof']>[2]) { return this.platform.presignProof(req.user, id, body); }
+
+  @Roles('promoter')
   @Post('promoter/assignments/:id/proofs')
   submitProof(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() body: Parameters<PlatformService['submitProof']>[2]) {
     return this.platform.submitProof(req.user, id, body);
   }
+
+  @Get('proofs/:id/evidence')
+  proofEvidence(@Req() req: AuthenticatedRequest, @Param('id') id: string) { return this.platform.proofEvidenceUrl(req.user, id); }
+
+  @Roles('admin')
+  @Get('admin/proofs')
+  adminProofs(@Query('status') status?: string) { return this.platform.adminProofs(status); }
 
   @Roles('admin')
   @Post('admin/proofs/:id/review')

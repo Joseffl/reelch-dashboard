@@ -22,6 +22,20 @@
       "when": 1789991415988,
       "tag": "0002_workable_jubilee",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1790069103988,
+      "tag": "0003_neat_midnight",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1790085159194,
+      "tag": "0004_restore_payment_attempts",
+      "breakpoints": true
     }
   ]
 }

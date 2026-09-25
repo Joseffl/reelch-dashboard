@@ -1,4 +1,4 @@
-import { BadGatewayException, Injectable, ServiceUnavailableException } from '@nestjs/common';
+import { BadGatewayException, Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 
 type PaystackResponse<T> = { status: boolean; message: string; data: T };
 export type PaystackVerification = { status: string; reference: string; amount: number; currency: string; paid_at?: string | null; metadata?: Record<string, unknown> | string; channel?: string; gateway_response?: string; customer?: { customer_code?: string } };
@@ -7,6 +7,8 @@ export type PaystackDedicatedAccount = { id: number; account_name: string; accou
 
 @Injectable()
 export class PaystackService {
+  private readonly logger = new Logger(PaystackService.name);
+
   private get secretKey() {
     const key = process.env.PAYSTACK_SECRET_KEY?.trim();
     if (!key) throw new ServiceUnavailableException('Paystack is not configured yet');
@@ -43,10 +45,21 @@ export class PaystackService {
   }
   private async request<T>(path: string, init: RequestInit): Promise<T> {
     let response: Response;
-    try { response = await fetch(`https://api.paystack.co${path}`, { ...init, headers: { Authorization: `Bearer ${this.secretKey}`, 'Content-Type': 'application/json' } }); }
-    catch { throw new BadGatewayException('Could not reach Paystack'); }
+    try {
+      response = await fetch(`https://api.paystack.co${path}`, {
+        ...init,
+        headers: { Authorization: `Bearer ${this.secretKey}`, 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(12_000),
+      });
+    } catch (cause) {
+      this.logger.error(`Paystack request failed for ${path}`, cause instanceof Error ? cause.stack : undefined);
+      throw new BadGatewayException('Payment service is temporarily unavailable. Please try again.');
+    }
     const payload = await response.json().catch(() => ({ status: false, message: 'Invalid response from Paystack' })) as T & { message?: string };
-    if (!response.ok) throw new BadGatewayException(payload.message || 'Paystack request failed');
+    if (!response.ok) {
+      this.logger.warn(`Paystack rejected ${path} with status ${response.status}: ${payload.message ?? 'No message'}`);
+      throw new BadGatewayException(payload.message || 'Payment could not be started. Please try again.');
+    }
     return payload;
   }
 }

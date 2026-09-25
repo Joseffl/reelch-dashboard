@@ -3,6 +3,7 @@ import { PlatformController } from './platform.controller.js';
 import { PlatformService } from './platform.service.js';
 import { R2StorageService } from '../storage/r2-storage.service.js';
 import { PaystackService } from './paystack.service.js';
+import { SocialVerificationService } from './social-verification.service.js';
 
-@Module({ controllers: [PlatformController], providers: [PlatformService, R2StorageService, PaystackService] })
+@Module({ controllers: [PlatformController], providers: [PlatformService, R2StorageService, PaystackService, SocialVerificationService] })
 export class PlatformModule {}

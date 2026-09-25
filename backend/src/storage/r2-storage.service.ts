@@ -63,6 +63,20 @@ export class R2StorageService {
     return { key, uploadUrl, expiresIn: 300, headers: { 'Content-Type': input.contentType } };
   }
 
+  async createProofUpload(userId: string, assignmentId: string, input: { filename: string; contentType: string; sizeBytes: number }) {
+    this.validateFile(input.contentType, input.sizeBytes); const { client, bucket } = this.configured();
+    const extension = input.filename.split('.').pop()?.replace(/[^a-z0-9]/gi, '').toLowerCase() || 'bin';
+    const key = `proofs/${userId}/${assignmentId}/${randomUUID()}.${extension}`;
+    const uploadUrl = await getSignedUrl(client, new PutObjectCommand({ Bucket: bucket, Key: key, ContentType: input.contentType }), { expiresIn: 300 });
+    return { key, uploadUrl, expiresIn: 300, headers: { 'Content-Type': input.contentType } };
+  }
+
+  async assertProofUpload(userId: string, assignmentId: string, key: string, contentType: string, sizeBytes: number) {
+    this.validateFile(contentType, sizeBytes); if (!key.startsWith(`proofs/${userId}/${assignmentId}/`)) throw new BadRequestException('Invalid proof file key');
+    const { client, bucket } = this.configured(); const object = await client.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
+    if (object.ContentType !== contentType || object.ContentLength !== sizeBytes) throw new BadRequestException('Uploaded proof does not match its declaration');
+  }
+
   async assertCampaignUpload(userId: string, campaignId: string, key: string, contentType: string, sizeBytes: number) {
     if (!key.startsWith(`campaigns/${userId}/${campaignId}/`)) throw new BadRequestException('Invalid campaign file key');
     if (!creativeTypes.has(contentType) || sizeBytes > 25 * 1024 * 1024) throw new BadRequestException('Invalid campaign file');
