@@ -26,6 +26,7 @@ import {
   Sparkles,
   TrendingUp,
   UsersRound,
+  UserPlus,
   UserCircle,
   WalletCards,
   X,
@@ -46,7 +47,8 @@ export type IconName =
   | "disputes"
   | "proofs"
   | "notifications"
-  | "analytics";
+  | "analytics"
+  | "waitlist";
 
 export type NavItem = { label: string; href: string; icon: IconName };
 
@@ -65,6 +67,7 @@ const icons: Record<IconName, LucideIcon> = {
   proofs: Images,
   notifications: Bell,
   analytics: BarChart3,
+  waitlist: UserPlus,
 };
 
 const roleIcons: Record<string, LucideIcon> = {
@@ -239,7 +242,7 @@ export function DashboardShell({ role, title, accent, navigation, children }: {
       <main className="grid min-h-screen place-items-center bg-[#171811] text-white" aria-live="polite">
         <div className="text-center">
           <span className="mx-auto block size-8 animate-spin rounded-full border-2 border-white/20 border-t-[#9cff57] motion-reduce:animate-none" />
-          <p className="mt-4 text-sm font-semibold text-white/60">Preparing your workspace…</p>
+          <p className="mt-4 text-sm font-semibold text-white/60">Loading…</p>
         </div>
       </main>
     );

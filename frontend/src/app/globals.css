@@ -27,6 +27,25 @@ body {
   font-family: Arial, Helvetica, sans-serif;
 }
 
+a, button {
+  -webkit-tap-highlight-color: transparent;
+}
+
+.hero-grid {
+  background-image: linear-gradient(rgba(23, 24, 17, .07) 1px, transparent 1px), linear-gradient(90deg, rgba(23, 24, 17, .07) 1px, transparent 1px);
+  background-size: 52px 52px;
+  mask-image: linear-gradient(to bottom, black 45%, transparent 95%);
+}
+
+.section-kicker { font-size: .72rem; font-weight: 900; letter-spacing: .18em; text-transform: uppercase; }
+.button-pop { transition: transform .2s ease, box-shadow .2s ease; }
+.button-pop:hover { transform: translate(-2px, -2px); box-shadow: 4px 4px 0 #171811; }
+.campaign-card { animation: card-float 5s ease-in-out infinite; }
+.ticker-content { animation: ticker 42s linear infinite; }
+
+@keyframes card-float { 0%, 100% { transform: rotate(2.5deg) translateY(0); } 50% { transform: rotate(1deg) translateY(-10px); } }
+@keyframes ticker { to { transform: translateX(-50%); } }
+
 ::selection {
   background: #c7ff5e;
   color: #171811;
@@ -45,4 +64,6 @@ body {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
   }
+
+  .campaign-card, .ticker-content { animation: none !important; }
 }
