@@ -113,3 +113,31 @@
 @keyframes campaign-review-ready{0%,63%{background:var(--ink);transform:scale(1)}69%,76%{background:var(--purple);transform:scale(.985)}82%,100%{background:var(--ink);transform:scale(1)}}
 @keyframes campaign-cursor{0%{transform:translate(225px,12px);opacity:0}5%{transform:translate(80px,30px);opacity:1}29%{transform:translate(175px,30px)}35%{transform:translate(215px,86px)}45%{transform:translate(215px,86px)}53%{transform:translate(145px,145px)}62%{transform:translate(145px,145px)}70%{transform:translate(145px,205px)}78%{transform:translate(145px,205px)}88%{transform:translate(240px,225px);opacity:1}94%,100%{transform:translate(250px,225px);opacity:0}}
 @media(prefers-reduced-motion:reduce){.campaign-demo-cursor{display:none}.campaign-typed-name{width:23ch;border-right:0}.campaign-demo-goals .campaign-goal-active{background:#ded9ff;border-color:#6255e75c;color:#4f43cb}}
+@media(min-width:901px) and (max-height:850px){
+  .marketing-header .nav{height:clamp(68px,9vh,76px)}
+  .hero{padding-top:clamp(28px,5vh,48px)}
+  .hero h1{max-width:900px;margin-top:0;font-size:clamp(58px,10vh,78px);line-height:.88}
+  .hero-copy>p:last-of-type{max-width:720px;margin-top:clamp(16px,2.5vh,22px);font-size:16px;line-height:1.55}
+  .hero-actions{margin-top:clamp(16px,2.5vh,22px)}
+  .hero-actions .button{min-height:44px;padding-block:10px}
+  .hero-product{margin-top:clamp(26px,4vh,38px)}
+  .hero-photo{height:clamp(500px,72vh,620px)}
+  .channels,.section,.protection{padding-top:clamp(70px,10vh,90px);padding-bottom:clamp(70px,10vh,90px)}
+  .goal-grid,.step-grid,.audience-grid{margin-top:clamp(38px,6vh,50px)}
+  .goal-grid article{min-height:310px;padding:26px}.goal-grid h3{margin-top:34px}
+  .step-grid>article{padding:24px}.step-visual{margin-top:18px}
+  .product{padding:44px}.audience{min-height:520px;padding:32px}.audience h3{margin-top:34px}
+  .faq-list{margin-top:48px}.faq-list summary{padding:24px 0}
+  .about-hero,.contact-hero,.privacy-hero{padding-top:clamp(65px,10vh,90px);padding-bottom:clamp(70px,11vh,95px)}
+  .about-intro,.about-direction,.about-why,.about-values,.about-team,.contact-options,.contact-next,.privacy-content{padding-top:clamp(70px,10vh,90px);padding-bottom:clamp(70px,10vh,90px)}
+  .about-direction article{min-height:390px}.about-values>div>div{margin-top:45px}.about-values h3{margin-top:34px}
+  .contact-direct{padding-top:60px;padding-bottom:60px}.contact-form,.contact-form-success{padding:32px}
+  .footer-main{padding-top:48px;padding-bottom:44px}.footer-bottom{margin-top:34px}
+}
+.privacy-page{background:var(--cream)}
+.privacy-hero{padding:105px 0 115px;text-align:center}.privacy-hero>.wrap>span{margin:auto;display:grid;width:58px;height:58px;place-items:center;border-radius:18px;background:var(--green)}.privacy-hero svg{width:23px}.privacy-hero h1{max-width:1030px;margin:28px auto 0;font-size:clamp(58px,8vw,106px);font-weight:900;line-height:.9;letter-spacing:-.075em}.privacy-hero h1 em{font-family:Georgia,serif;font-weight:400;color:var(--purple)}.privacy-hero p{max-width:700px;margin:28px auto 0;font-size:18px;line-height:1.7;color:#17181196}.privacy-hero small{display:block;margin-top:22px;font-size:10px;font-weight:900;letter-spacing:.13em;text-transform:uppercase;color:#17181170}
+.privacy-principles{padding:55px 0;background:var(--purple);color:white}.privacy-principles>.wrap{display:grid;grid-template-columns:repeat(3,1fr)}.privacy-principles article{padding:10px 34px;display:flex;gap:16px;border-right:1px solid #ffffff2d}.privacy-principles article:first-child{padding-left:0}.privacy-principles article:last-child{padding-right:0;border-right:0}.privacy-principles article>span{display:grid;width:46px;height:46px;flex:none;place-items:center;border-radius:50%;background:var(--green);color:var(--ink)}.privacy-principles svg{width:19px}.privacy-principles h2{font-size:17px;font-weight:800}.privacy-principles p{margin-top:7px;font-size:12px;line-height:1.6;color:#ffffffa3}
+.privacy-content{padding:110px 0;background:white}.privacy-content>.wrap{display:grid;grid-template-columns:.65fr 1.35fr;gap:100px;align-items:start}.privacy-content aside{position:sticky;top:120px}.privacy-content aside>p{font-size:10px;font-weight:900;letter-spacing:.14em;text-transform:uppercase;color:var(--purple)}.privacy-content aside h2{margin-top:18px;font-size:clamp(42px,4.5vw,64px);font-weight:800;line-height:1;letter-spacing:-.055em}.privacy-content aside>span{display:block;margin-top:20px;max-width:360px;line-height:1.7;color:#17181180}.privacy-content aside>a,.privacy-sections a{margin-top:25px;display:inline-flex;align-items:center;gap:8px;font-size:13px;font-weight:800}.privacy-content aside svg,.privacy-sections svg{width:15px}.privacy-sections{border-top:1px solid #17181125}.privacy-sections article{padding:34px 0;display:grid;grid-template-columns:55px 1fr;gap:20px;border-bottom:1px solid #17181125}.privacy-sections>article>span{padding-top:3px;font-size:13px;font-weight:800;color:var(--purple)}.privacy-sections h2{font-size:27px;font-weight:800;letter-spacing:-.035em}.privacy-sections p{margin-top:13px;font-size:16px;line-height:1.8;color:#17181190}.privacy-sections a{margin-top:18px;color:var(--purple)}
+@media(max-width:900px){.privacy-principles>.wrap{grid-template-columns:1fr}.privacy-principles article,.privacy-principles article:first-child,.privacy-principles article:last-child{padding:22px 0;border-right:0;border-bottom:1px solid #ffffff2d}.privacy-principles article:last-child{border-bottom:0}.privacy-content>.wrap{grid-template-columns:1fr;gap:50px}.privacy-content aside{position:static}}
+@media(max-width:600px){.privacy-hero{padding:78px 0 85px}.privacy-hero h1{font-size:clamp(55px,17vw,75px)}.privacy-hero p{font-size:16px}.privacy-content{padding:78px 0}.privacy-sections article{grid-template-columns:38px 1fr;gap:10px;padding:28px 0}.privacy-sections h2{font-size:22px}.privacy-sections p{font-size:14px;line-height:1.7}}
+@media(min-width:901px) and (max-height:850px){.privacy-hero{padding-top:clamp(65px,10vh,90px);padding-bottom:clamp(70px,11vh,95px)}.privacy-content{padding-top:clamp(70px,10vh,90px);padding-bottom:clamp(70px,10vh,90px)}.privacy-sections article{padding:28px 0}}
