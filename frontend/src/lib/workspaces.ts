@@ -25,6 +25,7 @@ export const adminNavigation: NavItem[] = [
   { label: "Overview", href: "/admin", icon: "overview" },
   { label: "Verifications", href: "/admin/verifications", icon: "verification" },
   { label: "Waitlist", href: "/admin/waitlist", icon: "waitlist" },
+  { label: "Enquiries", href: "/admin/enquiries", icon: "enquiries" },
   { label: "Campaigns", href: "/admin/campaigns", icon: "campaigns" },
   { label: "Proof review", href: "/admin/proofs", icon: "proofs" },
   { label: "Withdrawals", href: "/admin/withdrawals", icon: "withdrawals" },

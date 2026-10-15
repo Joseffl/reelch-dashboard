@@ -15,6 +15,7 @@ import {
   FileCheck2,
   Gauge,
   HandCoins,
+  Inbox,
   Images,
   LayoutDashboard,
   LogOut,
@@ -48,7 +49,8 @@ export type IconName =
   | "proofs"
   | "notifications"
   | "analytics"
-  | "waitlist";
+  | "waitlist"
+  | "enquiries";
 
 export type NavItem = { label: string; href: string; icon: IconName };
 
@@ -68,6 +70,7 @@ const icons: Record<IconName, LucideIcon> = {
   notifications: Bell,
   analytics: BarChart3,
   waitlist: UserPlus,
+  enquiries: Inbox,
 };
 
 const roleIcons: Record<string, LucideIcon> = {

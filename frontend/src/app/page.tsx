@@ -1,95 +1,59 @@
+import Image from "next/image";
 import Link from "next/link";
-import {
-  ArrowDownRight, ArrowRight, BadgeCheck, Banknote, BarChart3,
-  BriefcaseBusiness, Check, CircleCheck, Eye, Megaphone,
-  MousePointerClick, MoveUpRight, ShieldCheck, Sparkles, UserRound,
-} from "lucide-react";
+import { ArrowRight, BarChart3, BriefcaseBusiness, Check, CircleCheck, Eye, Megaphone, MousePointerClick, Send, ShieldCheck, Target, UsersRound } from "lucide-react";
+import { FaInstagram, FaTelegram, FaTiktok, FaWhatsapp, FaXTwitter, FaYoutube } from "react-icons/fa6";
+import { AnimatedNumber } from "@/components/animated-number";
 import { CookieBanner } from "@/components/cookie-banner";
+import { MarketingFooter } from "@/components/marketing-footer";
+import { MarketingHeader } from "@/components/marketing-header";
 import { PromoterWaitlistForm } from "@/components/promoter-waitlist-form";
 
-const steps = [
-  { icon: BriefcaseBusiness, number: "01", title: "Set the outcome", text: "Choose the goal, audience, reward and rules before the campaign goes live." },
-  { icon: Megaphone, number: "02", title: "Share with intent", text: "Matched promoters share a unique link with the people most likely to care." },
-  { icon: BadgeCheck, number: "03", title: "Reward real results", text: "Reelch verifies each action, shows what worked and keeps payouts transparent." },
+const channels=[
+ {name:"WhatsApp",icon:FaWhatsapp},
+ {name:"Instagram",icon:FaInstagram},
+ {name:"TikTok",icon:FaTiktok},
+ {name:"X",icon:FaXTwitter},
+ {name:"Telegram",icon:FaTelegram},
+ {name:"YouTube",icon:FaYoutube},
+];
+const goals=[
+ {icon:Eye,title:"Visibility",text:"Put your brand, product or message in front of relevant audiences.",measure:"Reach and engagement where available"},
+ {icon:UsersRound,title:"Acquisition",text:"Encourage useful actions such as sign-ups, enquiries and lead submissions.",measure:"Clicks, submissions and qualified actions"},
+ {icon:Target,title:"Conversion",text:"Drive defined outcomes such as purchases when reliable tracking is supported.",measure:"Supported conversion events"},
+];
+const faqs=[
+ ["Who can become a promoter?","Creators, community leaders and everyday people with a genuine audience can apply. You do not need celebrity-level follower counts."],
+ ["What does Reelch measure?","Measurement depends on the campaign objective and channel. This may include link clicks, submissions, approved leads or supported conversion events. Every campaign states what is tracked before a promoter joins."],
+ ["How are rewards decided?","Businesses set the reward model and requirements upfront. Promoters see the terms before choosing to participate."],
+ ["Which platforms can I use?","Campaigns can be designed for channels such as WhatsApp, Instagram, TikTok, X, Telegram and YouTube. Availability may vary by campaign and launch phase."],
 ];
 
-const ticker = ["VERIFIED RESULTS", "REAL REACH", "CLEAR REWARDS", "BETTER CAMPAIGNS"];
+export default function Home(){return <main>
+ <MarketingHeader/>
 
-export default function Home() {
-  return (
-    <main className="overflow-hidden bg-[#f4f1e9] text-[#171811]">
-      <header className="absolute inset-x-0 top-0 z-40">
-        <div className="mx-auto flex h-24 max-w-[1380px] items-center justify-between px-5 sm:px-8 lg:px-12">
-          <Link href="/" aria-label="Reelch home" className="text-[1.65rem] font-black tracking-[-.09em]">REELCH<span className="text-[#6255e7]">.</span></Link>
-          <nav className="hidden items-center gap-8 text-xs font-black uppercase tracking-[.08em] md:flex"><a href="#how">How it works</a><a href="#businesses">Businesses</a><a href="#promoters">Promoters</a></nav>
-          <div className="flex items-center gap-2"><Link href="/login" className="hidden px-3 py-2 text-sm font-bold sm:block">Sign in</Link><a href="#waitlist" className="button-pop inline-flex min-h-11 items-center gap-2 rounded-full bg-[#171811] px-5 text-sm font-bold text-white">Get early access <ArrowRight className="size-4" /></a></div>
-        </div>
-      </header>
+ <section className="hero"><div className="wrap hero-copy"><h1>Real people. Real reach. <em>Real results.</em></h1><p>Connect with everyday promoters who share your business across social platforms. Track available campaign activity, set transparent rewards and turn trusted recommendations into measurable growth.</p><div className="hero-actions"><Link className="button dark" href="/register">Grow your business <ArrowRight/></Link><a className="button light" href="#waitlist">Become a promoter <ArrowRight/></a></div></div><div className="wrap"><HeroProduct/></div></section>
 
-      <section className="relative border-b-2 border-[#171811] pt-24">
-        <div className="hero-grid absolute inset-0 opacity-35" />
-        <div className="relative mx-auto grid min-h-[760px] max-w-[1380px] items-center gap-14 px-5 py-16 sm:px-8 lg:grid-cols-[1.16fr_.84fr] lg:px-12">
-          <div className="relative z-10">
-            <div className="mb-7 inline-flex rotate-[-1deg] items-center gap-2 border-2 border-[#171811] bg-[#a8e86f] px-4 py-2 text-xs font-black uppercase tracking-[.12em] shadow-[3px_3px_0_#171811]"><Sparkles className="size-4" /> Performance, made human</div>
-            <h1 className="max-w-[900px] text-[clamp(4.25rem,9.4vw,9.4rem)] font-black uppercase leading-[.77] tracking-[-.09em]">Reach that<br /><span className="text-[#6255e7]">really</span> works.</h1>
-            <div className="mt-10 flex max-w-3xl flex-col gap-7 sm:flex-row sm:items-end sm:justify-between">
-              <p className="max-w-xl text-lg font-medium leading-8 text-black/62 sm:text-xl">Reelch connects businesses with trusted promoters—and turns influence into outcomes everyone can see.</p>
-              <a href="#how" className="group grid size-16 shrink-0 place-items-center rounded-full border-2 border-[#171811] bg-white transition hover:-rotate-6 hover:bg-[#a8e86f]" aria-label="See how Reelch works"><ArrowDownRight className="size-7 transition group-hover:translate-x-1 group-hover:translate-y-1" /></a>
-            </div>
-          </div>
-          <div className="relative mx-auto w-full max-w-[460px]">
-            <div className="absolute -left-8 -top-10 size-24 rounded-full bg-[#a8e86f]" />
-            <CampaignCard floating />
-          </div>
-        </div>
-      </section>
+ <section id="channels" className="channels"><div className="wrap"><div><h2>Your customers are everywhere. <em>Be where they are.</em></h2><p>Run campaigns through relevant creators and everyday promoters across the social channels your audience already uses.</p></div><div className="channel-list">{channels.map(({name,icon:Icon})=><span key={name}><b><Icon aria-hidden="true"/></b>{name}</span>)}</div></div></section>
 
-      <div className="border-b-2 border-[#171811] bg-[#a8e86f] py-3.5"><div className="ticker-content flex min-w-max items-center gap-10">{[...ticker, ...ticker].map((item, index) => <span key={`${item}-${index}`} className="flex items-center gap-10 text-xs font-black uppercase tracking-[.16em]"><span>{item}</span><span className="text-lg">✦</span></span>)}</div></div>
+ <section id="goals" className="section goals"><div className="wrap"><SectionHead overline="One platform, different growth goals" title="Choose the outcome that matters." text="Reelch supports campaigns across the customer journey. Tracking and reward rules are matched to each campaign objective—not treated as one-size-fits-all."/><div className="goal-grid">{goals.map(({icon:Icon,title,text,measure})=><article key={title}><span><Icon/></span><h3>{title}</h3><p>{text}</p><small><CircleCheck/> {measure}</small></article>)}</div></div></section>
 
-      <section id="how" className="py-24 sm:py-32">
-        <div className="mx-auto max-w-[1240px] px-5 sm:px-8">
-          <div className="grid gap-8 lg:grid-cols-[.8fr_1.2fr] lg:items-end">
-            <div><p className="section-kicker text-[#6255e7]">How Reelch works</p><h2 className="mt-4 text-[clamp(3rem,5vw,4.75rem)] font-black leading-[.94] tracking-[-.065em]">One campaign.<br />One source of truth.</h2></div>
-            <p className="max-w-xl text-lg leading-8 text-black/55 lg:justify-self-end">From brief to payout, Reelch keeps the campaign clear. No scattered screenshots, vague terms or awkward follow-ups.</p>
-          </div>
+ <section id="how" className="section how"><div className="wrap"><SectionHead overline="How Reelch works" title="From campaign idea to measurable activity." text="A product-led workflow for businesses and a straightforward earning journey for promoters."/><div className="step-grid"><Step number="01" title="Create" text="Choose your objective, audience, budget and reward terms."><div className="mini-form"><i/><i/><div><b>Visibility</b><b>Acquisition</b><b>Conversion</b></div><button>Review campaign</button></div></Step><Step number="02" title="Promote" text="Matched promoters choose the campaign and share it with their audience."><div className="mini-phone"><span>@amara.creates</span><Image src="/images/reelch-hero-collaboration.png" alt="Example social promotion" fill sizes="260px"/><b><Send/> Share campaign</b></div></Step><Step number="03" title="Measure" text="Follow available activity, review outcomes and manage eligible rewards."><div className="mini-report"><div><small>Tracked activity</small><b><AnimatedNumber value={184}/></b></div><div className="mini-bars">{[35,58,48,76,64,91].map((h,i)=><i key={i} style={{height:`${h}%`}}/>)}</div><span>Rewards pending review</span></div></Step></div></div></section>
 
-          <div className="mt-16 grid gap-8 rounded-[2rem] bg-[#171811] p-5 text-white sm:p-8 lg:grid-cols-[1.08fr_.92fr] lg:p-10">
-            <div className="rounded-2xl bg-[#f8f7f2] p-5 text-[#171811] sm:p-7">
-              <div className="flex items-center justify-between border-b border-black/10 pb-5"><div><p className="text-[.65rem] font-black uppercase tracking-[.16em] text-black/38">Campaign overview</p><h3 className="mt-2 text-xl font-black">New customer referrals</h3></div><span className="rounded-full bg-[#e5f5d6] px-3 py-1.5 text-xs font-black text-[#315d13]">Live</span></div>
-              <div className="grid grid-cols-2 gap-3 py-5 sm:grid-cols-3"><ProductStat label="Verified results" value="184" trend="+18%" /><ProductStat label="Conversion rate" value="12.4%" trend="+2.1%" /><ProductStat label="Reward paid" value="₦276k" trend="On track" /></div>
-              <div className="rounded-xl border border-black/10 bg-white p-4"><div className="flex h-28 items-end gap-2">{[28, 45, 38, 62, 52, 76, 68, 88, 74, 96, 84, 100].map((height, index) => <span key={index} className="flex-1 rounded-t-sm bg-[#6255e7]/20" style={{ height: `${height}%` }}><span className="block h-[35%] rounded-t-sm bg-[#6255e7]" /></span>)}</div><div className="mt-3 flex justify-between text-[.6rem] font-bold uppercase tracking-wider text-black/35"><span>Campaign start</span><span>Today</span></div></div>
-            </div>
-            <div className="flex flex-col justify-between p-2 sm:p-4"><div><span className="grid size-12 place-items-center rounded-full bg-[#a8e86f] text-black"><Eye className="size-5" /></span><h3 className="mt-6 text-3xl font-black tracking-[-.04em]">Clarity at every step.</h3><p className="mt-4 max-w-md leading-7 text-white/55">Businesses know where their budget goes. Promoters know exactly what counts. Both sides see progress as it happens.</p></div><div className="mt-10 grid grid-cols-2 gap-px overflow-hidden rounded-xl bg-white/10"><MiniStat icon={MousePointerClick} label="Attribution" value="Unique referral links" /><MiniStat icon={ShieldCheck} label="Verification" value="Valid results only" /><MiniStat icon={Banknote} label="Rewards" value="Clear before sharing" /><MiniStat icon={BarChart3} label="Reporting" value="Live campaign data" /></div></div>
-          </div>
+ <section className="section product-section"><div className="wrap"><ProductPreview/></div></section>
 
-          <div className="mt-20 grid border-t border-black/15 lg:grid-cols-3">{steps.map((step) => <article key={step.title} className="border-b border-black/15 py-8 lg:border-r lg:px-8 lg:first:pl-0 lg:last:border-r-0"><div className="flex items-center justify-between"><span className="grid size-11 place-items-center rounded-full bg-[#e8e4ff] text-[#6255e7]"><step.icon className="size-5" /></span><span className="text-sm font-black text-black/20">{step.number}</span></div><h3 className="mt-8 text-2xl font-black tracking-[-.04em]">{step.title}</h3><p className="mt-3 max-w-sm leading-7 text-black/50">{step.text}</p></article>)}</div>
-        </div>
-      </section>
+ <section className="section audience-section"><div className="wrap"><SectionHead overline="Made for both sides" title="A better exchange for everyone." text="Businesses get structured distribution. Promoters get campaigns with upfront expectations and reward terms."/><div className="audience-grid"><Audience id="businesses" tone="green" icon={BriefcaseBusiness} label="For businesses" title="Your next customers are already in someone’s audience." text="Launch campaigns around a specific growth goal and work with promoters who can reach relevant communities." points={["Launch campaigns based on your goals","Set budgets and reward terms","Track measurable campaign activity"]} href="/register" cta="Create a business account"/><Audience id="promoters" tone="purple" icon={Megaphone} label="For promoters" title="Your audience has value. Make it count." text="Discover campaigns that fit your audience and know what is required before you choose to promote." points={["Find campaigns that fit your audience","See requirements and rewards upfront","Track activity and eligible earnings"]} href="#waitlist" cta="Join the promoter waitlist"/></div></div></section>
 
-      <section className="border-y border-black/10 bg-white py-20 sm:py-28">
-        <div className="mx-auto max-w-[1240px] px-5 sm:px-8"><div className="flex flex-col justify-between gap-5 md:flex-row md:items-end"><div><p className="section-kicker text-[#6255e7]">Built for both sides</p><h2 className="mt-4 text-4xl font-black tracking-[-.055em] sm:text-5xl">Different goals. Shared clarity.</h2></div><p className="max-w-sm leading-7 text-black/50">A better campaign experience for the people funding the work and the people moving the audience.</p></div>
-          <div className="mt-12 grid gap-5 lg:grid-cols-2"><AudienceCard id="businesses" type="For ambitious businesses" title={<>Pay for proof.<br />Not promises.</>} description="Define a real outcome, choose the right promoters and follow every conversion from click to payout." items={["Measurable acquisition campaigns", "Promoters matched to your audience", "Verified results and clear reporting"]} icon="business" href="/register" cta="Start a campaign" color="bg-[#b5ea83]" /><AudienceCard id="promoters" type="For trusted promoters" title={<>Make your reach<br />count.</>} description="Choose work that suits your audience and earn when your recommendation produces a verified result." items={["Rewards and requirements upfront", "A unique link for every campaign", "Results and earnings in one place"]} icon="promoter" href="#waitlist" cta="Join the waitlist" color="bg-[#c8c2f2]" /></div>
-        </div>
-      </section>
+ <section className="protection"><div className="wrap"><div><h2>Clear terms protect both sides.</h2><p>Every campaign defines its objective, eligible activity, evidence requirements and reward terms before promotion begins.</p></div><div className="protection-grid"><span><ShieldCheck/><b>For businesses</b><small>Campaign requirements and review rules are set upfront.</small></span><span><CircleCheck/><b>For promoters</b><small>Reward terms are visible before you decide to participate.</small></span><span><BarChart3/><b>For every campaign</b><small>Reporting reflects the metrics supported by its channel and objective.</small></span></div></div></section>
 
-      <section className="bg-[#eb91c4] px-5 py-20 text-center sm:px-8 sm:py-24"><p className="mx-auto max-w-4xl text-[clamp(2.6rem,5.5vw,5.5rem)] font-black uppercase leading-[.9] tracking-[-.07em]">Good influence should feel good for <span className="rounded-full bg-[#f4f1e9] px-4 italic">everyone.</span></p></section>
+ <section className="section faq"><div className="wrap"><h2>Questions people ask.</h2><div className="faq-list">{faqs.map(([q,a],index)=><details key={q} open={index===0}><summary><span className="faq-number">{String(index+1).padStart(2,"0")}</span><strong>{q}</strong><i className="faq-toggle" aria-hidden="true"/></summary><p>{a}</p></details>)}</div></div></section>
 
-      <section id="waitlist" className="bg-[#171811] py-24 text-white sm:py-28">
-        <div className="mx-auto grid max-w-[1160px] gap-14 px-5 sm:px-8 lg:grid-cols-[1fr_.82fr] lg:items-start">
-          <div><p className="section-kicker text-[#a8e86f]">Early access</p><h2 className="mt-5 max-w-2xl text-[clamp(3rem,5.5vw,5.25rem)] font-black leading-[.91] tracking-[-.065em]">Bring your audience.<br />We’ll bring the opportunities.</h2><p className="mt-7 max-w-lg text-lg leading-8 text-white/50">Join the first group of promoters shaping a clearer, fairer way to work with businesses.</p><div className="mt-9 space-y-4 text-sm text-white/65"><Note text="No fee to join" /><Note text="Useful campaigns, matched to your audience" /><Note text="Clear terms before you share anything" /></div></div>
-          <PromoterWaitlistForm />
-        </div>
-      </section>
+ <section id="waitlist" className="section waitlist"><div className="wrap wait-grid"><div><h2>Bring your audience.<br/><em>We’ll bring the opportunities.</em></h2><p>Join the first promoter cohort. If you are a business ready to launch campaigns, create a business account instead.</p><Link href="/register" className="business-path"><BriefcaseBusiness/><span><b>I’m a business</b>Create your account and campaign workspace.</span><ArrowRight/></Link></div><PromoterWaitlistForm/></div></section>
 
-      <footer className="px-5 pb-10 pt-20 sm:px-8 lg:px-12"><div className="mx-auto max-w-[1380px]"><div className="flex flex-col justify-between gap-8 border-b-2 border-[#171811] pb-12 md:flex-row md:items-end"><p className="text-[clamp(4.5rem,14vw,11rem)] font-black leading-[.7] tracking-[-.1em]">REELCH<span className="text-[#6255e7]">.</span></p><a href="#" className="grid size-14 place-items-center rounded-full border-2 border-[#171811]" aria-label="Back to top">↑</a></div><div className="flex flex-col gap-4 pt-7 text-xs font-bold uppercase tracking-[.08em] text-black/50 sm:flex-row sm:items-center sm:justify-between"><p>© 2026 Reelch. Reach that really works.</p><div className="flex gap-6"><Link href="/privacy">Privacy</Link><Link href="/login">Sign in</Link></div></div></div></footer>
-      <CookieBanner />
-    </main>
-  );
-}
+ <MarketingFooter/><CookieBanner/>
+ </main>}
 
-function CampaignCard({ floating = false }: { floating?: boolean }) { return <div className={`${floating ? "campaign-card" : ""} relative border-2 border-[#171811] bg-[#171811] p-5 text-white shadow-[10px_10px_0_#6255e7] sm:p-7`}><div className="flex items-start justify-between gap-3 border-b border-white/15 pb-5"><div><p className="text-[.65rem] font-black uppercase tracking-[.18em] text-white/40">Live opportunity</p><h2 className="mt-2 text-2xl font-black tracking-[-.04em]">Launch week referrals</h2></div><span className="rounded-full bg-[#a8e86f] px-3 py-2 text-xs font-black text-black">₦1,500 / result</span></div><div className="mt-5 grid grid-cols-2 gap-3"><MiniStat icon={MousePointerClick} label="Goal" value="Qualified sign-ups" /><MiniStat icon={Banknote} label="Reward" value="Per verified result" /><MiniStat icon={ShieldCheck} label="Tracking" value="Unique referral link" /><MiniStat icon={BarChart3} label="Status" value="Visible in real time" /></div><div className="mt-5 flex items-center gap-3 border border-white/15 bg-white/[.06] p-4"><span className="grid size-11 place-items-center rounded-full bg-[#c8c2f2] text-black"><UserRound className="size-5" /></span><div><p className="text-sm font-black">A match for your audience</p><p className="mt-1 text-xs text-white/45">Clear terms. No awkward follow-up.</p></div><CircleCheck className="ml-auto size-5 text-[#a8e86f]" /></div></div>; }
-function ProductStat({ label, value, trend }: { label: string; value: string; trend: string }) { return <div className="rounded-xl border border-black/10 bg-white p-4"><p className="text-[.6rem] font-black uppercase tracking-[.12em] text-black/35">{label}</p><p className="mt-3 text-2xl font-black tracking-[-.04em]">{value}</p><p className="mt-1 text-xs font-bold text-[#467d22]">{trend}</p></div>; }
-function MiniStat({ icon: Icon, label, value }: { icon: typeof MousePointerClick; label: string; value: string }) { return <div className="bg-white/[.06] p-4"><Icon className="size-4 text-[#a8e86f]" /><p className="mt-5 text-[.6rem] font-black uppercase tracking-[.15em] text-white/35">{label}</p><p className="mt-1 text-xs font-bold leading-5">{value}</p></div>; }
-function Benefit({ text }: { text: string }) { return <li className="flex items-center gap-3"><span className="grid size-7 place-items-center rounded-full bg-white/75"><Check className="size-4" /></span>{text}</li>; }
-function Note({ text }: { text: string }) { return <p className="flex items-center gap-3"><Check className="size-4 shrink-0 text-[#a8e86f]" />{text}</p>; }
-function AudienceCard({ id, type, title, description, items, icon, href, cta, color }: { id: string; type: string; title: React.ReactNode; description: string; items: string[]; icon: "business" | "promoter"; href: string; cta: string; color: string }) { const Icon = icon === "business" ? BriefcaseBusiness : Megaphone; return <article id={id} className={`group relative min-h-[560px] overflow-hidden border-2 border-[#171811] p-7 sm:p-10 lg:pb-28 ${color}`}><span className="absolute right-8 top-8 grid size-12 place-items-center rounded-full border-2 border-[#171811] bg-[#f4f1e9]"><Icon className="size-5" /></span><p className="text-xs font-black uppercase tracking-[.15em]">{type}</p><h3 className="mt-10 max-w-lg text-5xl font-black uppercase leading-[.91] tracking-[-.065em] sm:text-6xl">{title}</h3><p className="mt-7 max-w-lg leading-7 text-black/58">{description}</p><ul className="mt-8 space-y-3 text-sm font-black">{items.map(item => <Benefit key={item} text={item} />)}</ul><Link href={href} className="button-pop mt-8 inline-flex min-h-12 items-center gap-2 rounded-full bg-[#171811] px-5 text-sm font-bold text-white lg:absolute lg:bottom-10 lg:left-10 lg:mt-0">{cta} <MoveUpRight className="size-4" /></Link></article>; }
+function SectionHead({title,text}:{overline:string;title:string;text:string}){return <div className="section-head"><div><h2>{title}</h2></div><p>{text}</p></div>}
+function HeroProduct(){return <div className="hero-product hero-photo"><Image src="/images/reelch-hero-collaboration.png" alt="A creator and a business owner planning a campaign together" fill priority sizes="(max-width:800px) 94vw, 1240px"/></div>}
+function Step({number,title,text,children}:{number:string;title:string;text:string;children:React.ReactNode}){return <article><span className="step-number">{number}</span><h3>{title}</h3><p>{text}</p><div className="step-visual">{children}</div></article>}
+function ProductPreview(){return <div className="product"><div className="product-copy"><h2>Know what is happening, as it happens.</h2><p>Follow the activity that can be measured for each campaign. Review submissions, supported conversion events and reward status in one workspace.</p><div><span><MousePointerClick/>Objective-specific metrics</span><span><ShieldCheck/>Evidence and review workflows</span><span><BarChart3/>Pending and paid rewards</span></div></div><div className="dashboard"><div className="dash-head"><div><small>ACQUISITION CAMPAIGN</small><h3>New customer referrals</h3></div><span>Live</span></div><div className="dash-stats"><span><small>Link clicks</small><b><AnimatedNumber value={428}/></b></span><span><small>Submitted leads</small><b><AnimatedNumber value={54}/></b></span><span><small>Approved actions</small><b><AnimatedNumber value={41}/></b></span></div><div className="dash-bottom"><div className="chart">{[32,48,41,67,55,77,70,92,84].map((h,i)=><i key={i} style={{height:`${h}%`}}/>)}</div><div><small>REWARD STATUS</small><b><AnimatedNumber value={42000} prefix="₦"/></b><p>Pending review</p></div></div></div></div>}
+function Audience({id,tone,icon:Icon,label,title,text,points,href,cta}:{id:string;tone:string;icon:typeof Megaphone;label:string;title:string;text:string;points:string[];href:string;cta:string}){return <article id={id} className={`audience ${tone}`}><div className="audience-label"><span><Icon/></span>{label}</div><h3>{title}</h3><p>{text}</p><ul>{points.map(x=><li key={x}><Check/>{x}</li>)}</ul><Link href={href} className="button dark">{cta}<ArrowRight/></Link></article>}
