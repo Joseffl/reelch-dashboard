@@ -6,9 +6,10 @@ import { AuthModule } from './auth/auth.module.js';
 import { OnboardingModule } from './onboarding/onboarding.module.js';
 import { PlatformModule } from './platform/platform.module.js';
 import { WaitlistModule } from './waitlist/waitlist.module.js';
+import { ContactModule } from './contact/contact.module.js';
 
 @Module({
-  imports: [DatabaseModule, AuthModule, OnboardingModule, PlatformModule, WaitlistModule],
+  imports: [DatabaseModule, AuthModule, OnboardingModule, PlatformModule, WaitlistModule, ContactModule],
   controllers: [AppController],
   providers: [AppService],
 })

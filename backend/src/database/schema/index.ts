@@ -40,6 +40,19 @@ export const promoterWaitlist = pgTable('promoter_waitlist', {
   ...timestamps,
 }, (t) => [uniqueIndex('promoter_waitlist_email_unique').on(t.email)]);
 
+export const contactEnquiries = pgTable('contact_enquiries', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  fullName: text('full_name').notNull(),
+  email: text('email').notNull(),
+  phone: text('phone'),
+  company: text('company'),
+  enquiryType: text('enquiry_type').notNull(),
+  subject: text('subject').notNull(),
+  message: text('message').notNull(),
+  status: text('status').notNull().default('new'),
+  ...timestamps,
+}, (t) => [index('contact_enquiries_status_created_idx').on(t.status, t.createdAt)]);
+
 export const userRoles = pgTable('user_roles', {
   userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
   role: roleEnum('role').notNull(),
