@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, ArrowRight, Building2, Check, FileCheck2, LoaderCircle, Megaphone, Upload, UserRound } from "lucide-react";
 import { FormEvent, ReactNode, useEffect, useState } from "react";
+import { DashboardSkeleton } from "@/components/loading-skeleton";
 
 type Role = "business" | "promoter";
 type DocumentRecord = { id: string; kind: string; originalFilename: string; sizeBytes: number };
@@ -127,7 +128,7 @@ export function OnboardingFlow({ role }: { role: Role }) {
     catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to submit verification"); setBusy(false); }
   }
 
-  if (!status) return <main className="grid min-h-screen place-items-center bg-[#171811] text-white"><div className="text-center"><LoaderCircle className="mx-auto size-8 animate-spin text-[#9cff57]" /><p className="mt-4 text-sm text-white/55">Loading your dashboard…</p></div></main>;
+  if (!status) return <main className="min-h-screen bg-[#171811] text-white"><DashboardSkeleton dark /></main>;
   const profile = status.profile;
 
   if (submitted) return <main className="grid min-h-screen place-items-center bg-[#f6f5f0] px-5 text-[#171811]"><section className="w-full max-w-lg rounded-3xl border border-black/[0.08] bg-white p-8 text-center shadow-[0_24px_80px_rgba(20,22,15,0.1)] sm:p-12"><span className="mx-auto grid size-16 place-items-center rounded-2xl bg-[#9cff57]"><FileCheck2 className="size-8" /></span><p className="mt-7 text-xs font-bold uppercase tracking-[0.18em] text-[#6558ff]">Submitted successfully</p><h1 className="mt-3 text-4xl font-black tracking-[-0.05em]">Your account is under review.</h1><p className="mt-4 text-sm leading-7 text-black/50">Reelch operations will review your profile and documents. You can enter your workspace now; we’ll show your verification status there.</p><button onClick={() => { router.replace(`/${role}`); router.refresh(); }} className="mt-8 inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#171811] px-5 text-sm font-bold text-white">Go to dashboard <ArrowRight className="size-4" /></button></section></main>;

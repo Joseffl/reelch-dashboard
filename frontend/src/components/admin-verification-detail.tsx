@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { AlertTriangle, ArrowLeft, Check, ExternalLink, FileText, LoaderCircle, ShieldAlert, UserRound, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { DashboardSkeleton } from "@/components/loading-skeleton";
 
 type Detail = { request: { id: string; kind: string; status: string; decisionReason?: string | null; updatedAt: string }; user: { id: string; email: string; displayName: string; isActive: boolean; createdAt: string }; profile: Record<string, unknown>; documents: Array<{ id: string; kind: string; originalFilename: string; mimeType: string; sizeBytes: number }>; socials: Array<{ id: string; platform: string; handle: string; audienceSize?: number; dataSource: string }>; history: Array<{ id: string; action: string; metadata: Record<string, unknown>; createdAt: string }> };
 const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000/api/v1";
@@ -21,7 +22,7 @@ export function AdminVerificationDetail({ requestId }: { requestId: string }) {
   function toggleUser() { if (!detail) return; if (detail.user.isActive) { setSuspendReason(""); setSuspendOpen(true); } else { void updateUser(true); } }
   async function confirmSuspension() { const value = suspendReason.trim(); if (!value) return; if (await updateUser(false, value)) { setSuspendOpen(false); setSuspendReason(""); } }
   if (error && !detail) return <div><Link href="/admin/verifications" className="inline-flex items-center gap-2 text-sm font-bold"><ArrowLeft className="size-4" /> Queue</Link><p role="alert" className="mt-6 rounded-xl bg-red-50 p-5 text-sm font-bold text-red-700">{error}</p></div>;
-  if (!detail) return <div className="grid min-h-64 place-items-center"><LoaderCircle className="size-7 animate-spin text-[#6558ff]" /></div>;
+  if (!detail) return <DashboardSkeleton />;
   const hidden = new Set(["id", "ownerUserId", "userId", "verificationStatus", "createdAt", "updatedAt", "onboardingCompletedAt", "avatarStorageKey"]);
   const profileEntries = Object.entries(detail.profile ?? {}).filter(([key, value]) => !hidden.has(key) && value !== null && value !== "" && (!Array.isArray(value) || value.length));
   return <div>

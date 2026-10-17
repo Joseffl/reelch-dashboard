@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Patch, Post, Req, Res } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Req, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { AuthService } from './auth.service.js';
 import { Public } from './auth.decorators.js';
@@ -20,6 +20,20 @@ export class AuthController {
   @Post('login')
   async login(@Body() body: { email: string; password: string }, @Res({ passthrough: true }) response: Response) {
     const result = await this.auth.login(body);
+    this.setSessionCookie(response, result.accessToken);
+    return result;
+  }
+
+  @Public()
+  @Get('administrator-invitations/:token')
+  administratorInvitation(@Param('token') token: string) {
+    return this.auth.administratorInvitation(token);
+  }
+
+  @Public()
+  @Post('administrator-invitations/accept')
+  async acceptAdministratorInvitation(@Body() body: { token: string; displayName: string; password: string }, @Res({ passthrough: true }) response: Response) {
+    const result = await this.auth.acceptAdministratorInvitation(body);
     this.setSessionCookie(response, result.accessToken);
     return result;
   }

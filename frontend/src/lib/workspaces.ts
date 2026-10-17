@@ -33,6 +33,7 @@ export const adminNavigation: NavItem[] = [
   { label: "Analytics", href: "/admin/analytics", icon: "analytics" },
   { label: "Ledger", href: "/admin/ledger", icon: "ledger" },
   { label: "Notifications", href: "/admin/notifications", icon: "notifications" },
+  { label: "Administrators", href: "/admin/administrators", icon: "administrators" },
 ];
 
 export const workspaceCopy = {

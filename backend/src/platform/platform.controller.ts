@@ -10,6 +10,22 @@ import { PlatformService } from './platform.service.js';
 export class PlatformController {
   constructor(private readonly platform: PlatformService) {}
 
+  @Roles('admin')
+  @Get('admin/administrators')
+  administrators(@Req() req: AuthenticatedRequest) { return this.platform.administrators(req.user); }
+
+  @Roles('admin')
+  @Post('admin/administrators/invitations')
+  inviteAdministrator(@Req() req: AuthenticatedRequest, @Body() body: { email: string }) { return this.platform.inviteAdministrator(req.user, body); }
+
+  @Roles('admin')
+  @Post('admin/administrators/invitations/:id/revoke')
+  revokeAdministratorInvitation(@Req() req: AuthenticatedRequest, @Param('id') id: string) { return this.platform.revokeAdministratorInvitation(req.user, id); }
+
+  @Roles('admin')
+  @Patch('admin/administrators/:id/status')
+  administratorStatus(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() body: { isActive: boolean }) { return this.platform.setAdministratorActive(req.user, id, body.isActive); }
+
   @Roles('business')
   @Post('business/campaigns')
   createCampaign(@Req() req: AuthenticatedRequest, @Body() body: Parameters<PlatformService['createCampaign']>[1]) {

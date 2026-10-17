@@ -2,6 +2,7 @@
 
 import { ExternalLink, LoaderCircle } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { ListSkeleton } from "@/components/loading-skeleton";
 
 const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000/api/v1";
 
@@ -123,9 +124,7 @@ export function AdminProofs() {
       {error && <p className="mt-4 rounded-xl bg-red-50 p-4 text-sm font-bold text-red-700">{error}</p>}
 
       {!items ? (
-        <div className="grid min-h-64 place-items-center">
-          <LoaderCircle className="size-6 animate-spin" />
-        </div>
+        <ListSkeleton />
       ) : (
         <div className="mt-5 grid gap-4 xl:grid-cols-2">
           {items.map((item) => (

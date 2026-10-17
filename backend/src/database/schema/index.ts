@@ -38,7 +38,10 @@ export const promoterWaitlist = pgTable('promoter_waitlist', {
   niches: jsonb('niches').$type<string[]>().notNull().default([]),
   status: text('status').notNull().default('pending'),
   ...timestamps,
-}, (t) => [uniqueIndex('promoter_waitlist_email_unique').on(t.email)]);
+}, (t) => [
+  uniqueIndex('promoter_waitlist_email_unique').on(t.email),
+  index('promoter_waitlist_status_created_idx').on(t.status, t.createdAt),
+]);
 
 export const contactEnquiries = pgTable('contact_enquiries', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -58,6 +61,27 @@ export const userRoles = pgTable('user_roles', {
   role: roleEnum('role').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [primaryKey({ columns: [t.userId, t.role] })]);
+
+export const administrators = pgTable('administrators', {
+  userId: uuid('user_id').primaryKey().references(() => users.id, { onDelete: 'cascade' }),
+  isSuperAdmin: boolean('is_super_admin').notNull().default(false),
+  invitedByUserId: uuid('invited_by_user_id').references(() => users.id),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const administratorInvitations = pgTable('administrator_invitations', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  email: text('email').notNull(),
+  tokenHash: text('token_hash').notNull(),
+  invitedByUserId: uuid('invited_by_user_id').notNull().references(() => users.id),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  acceptedAt: timestamp('accepted_at', { withTimezone: true }),
+  revokedAt: timestamp('revoked_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  uniqueIndex('administrator_invitations_token_unique').on(t.tokenHash),
+  index('administrator_invitations_email_created_idx').on(t.email, t.createdAt),
+]);
 
 export const businesses = pgTable('businesses', {
   id: uuid('id').primaryKey().defaultRandom(), ownerUserId: uuid('owner_user_id').notNull().references(() => users.id),
@@ -86,7 +110,10 @@ export const verificationRequests = pgTable('verification_requests', {
   kind: roleEnum('kind').notNull(), status: verificationStatusEnum('status').notNull().default('draft'),
   evidence: jsonb('evidence').$type<Record<string, unknown>>().notNull().default({}), decisionReason: text('decision_reason'),
   reviewedBy: uuid('reviewed_by').references(() => users.id), reviewedAt: timestamp('reviewed_at', { withTimezone: true }), ...timestamps,
-});
+}, (t) => [
+  index('verification_requests_status_updated_idx').on(t.status, t.updatedAt),
+  index('verification_requests_user_idx').on(t.userId),
+]);
 
 export const verificationDocuments = pgTable('verification_documents', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -101,7 +128,7 @@ export const socialAccounts = pgTable('social_accounts', {
   id: uuid('id').primaryKey().defaultRandom(), promoterId: uuid('promoter_id').notNull().references(() => promoters.id, { onDelete: 'cascade' }),
   platform: text('platform').notNull(), handle: text('handle').notNull(), audienceSize: integer('audience_size'),
   dataSource: text('data_source').notNull().default('self_reported'), verifiedAt: timestamp('verified_at', { withTimezone: true }), ...timestamps,
-});
+}, (t) => [index('social_accounts_promoter_idx').on(t.promoterId)]);
 
 export const socialConnections = pgTable('social_connections', {
   id: uuid('id').primaryKey().defaultRandom(), promoterId: uuid('promoter_id').notNull().references(() => promoters.id, { onDelete: 'cascade' }),
@@ -119,7 +146,10 @@ export const campaigns = pgTable('campaigns', {
   platformFeeKobo: bigint('platform_fee_kobo', { mode: 'number' }).notNull().default(0), verifiedQuantity: integer('verified_quantity').notNull().default(0),
   targeting: jsonb('targeting').$type<Record<string, unknown>>().notNull().default({}), status: campaignStatusEnum('status').notNull().default('draft'),
   termsVersion: integer('terms_version').notNull().default(1), startsAt: timestamp('starts_at', { withTimezone: true }), endsAt: timestamp('ends_at', { withTimezone: true }), ...timestamps,
-}, (t) => [index('campaigns_business_status_idx').on(t.businessId, t.status)]);
+}, (t) => [
+  index('campaigns_business_status_idx').on(t.businessId, t.status),
+  index('campaigns_status_updated_idx').on(t.status, t.updatedAt),
+]);
 
 export const campaignCreatives = pgTable('campaign_creatives', {
   id: uuid('id').primaryKey().defaultRandom(), campaignId: uuid('campaign_id').notNull().references(() => campaigns.id, { onDelete: 'cascade' }),
@@ -132,7 +162,7 @@ export const campaignStatusHistory = pgTable('campaign_status_history', {
   id: uuid('id').primaryKey().defaultRandom(), campaignId: uuid('campaign_id').notNull().references(() => campaigns.id, { onDelete: 'cascade' }),
   fromStatus: campaignStatusEnum('from_status'), toStatus: campaignStatusEnum('to_status').notNull(), reason: text('reason'),
   actorUserId: uuid('actor_user_id').notNull().references(() => users.id), createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-});
+}, (t) => [index('campaign_status_history_campaign_created_idx').on(t.campaignId, t.createdAt)]);
 
 export const wallets = pgTable('wallets', {
   id: uuid('id').primaryKey().defaultRandom(), ownerType: text('owner_type').notNull(), ownerId: uuid('owner_id').notNull(),
@@ -169,7 +199,10 @@ export const ledgerEntries = pgTable('ledger_entries', {
   walletId: uuid('wallet_id').notNull().references(() => wallets.id), direction: ledgerDirectionEnum('direction').notNull(),
   amountKobo: bigint('amount_kobo', { mode: 'number' }).notNull(), currency: text('currency').notNull().default('NGN'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-}, (t) => [index('ledger_entries_wallet_idx').on(t.walletId, t.createdAt)]);
+}, (t) => [
+  index('ledger_entries_wallet_idx').on(t.walletId, t.createdAt),
+  index('ledger_entries_transaction_idx').on(t.transactionId),
+]);
 
 export const campaignReservations = pgTable('campaign_reservations', {
   id: uuid('id').primaryKey().defaultRandom(), campaignId: uuid('campaign_id').notNull().references(() => campaigns.id),
@@ -228,7 +261,11 @@ export const conversions = pgTable('conversions', {
   valueKobo: bigint('value_kobo', { mode: 'number' }), currency: text('currency').notNull().default('NGN'),
   status: conversionStatusEnum('status').notNull().default('detected'), rejectionReason: text('rejection_reason'),
   verifiedAt: timestamp('verified_at', { withTimezone: true }), ...timestamps,
-}, (t) => [uniqueIndex('conversion_external_reference_unique').on(t.externalReference)]);
+}, (t) => [
+  uniqueIndex('conversion_external_reference_unique').on(t.externalReference),
+  index('conversions_campaign_status_created_idx').on(t.campaignId, t.status, t.createdAt),
+  index('conversions_promoter_created_idx').on(t.promoterId, t.createdAt),
+]);
 
 export const verificationResults = pgTable('verification_results', {
   id: uuid('id').primaryKey().defaultRandom(), conversionId: uuid('conversion_id').notNull().references(() => conversions.id),
@@ -241,13 +278,16 @@ export const fraudFlags = pgTable('fraud_flags', {
   promoterId: uuid('promoter_id').references(() => promoters.id), rule: text('rule').notNull(), riskScore: integer('risk_score').notNull(),
   details: jsonb('details').$type<Record<string, unknown>>().notNull().default({}), resolvedAt: timestamp('resolved_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-});
+}, (t) => [index('fraud_flags_resolved_created_idx').on(t.resolvedAt, t.createdAt)]);
 
 export const auditLogs = pgTable('audit_logs', {
   id: uuid('id').primaryKey().defaultRandom(), actorUserId: uuid('actor_user_id').references(() => users.id), action: text('action').notNull(),
   resourceType: text('resource_type').notNull(), resourceId: uuid('resource_id'), metadata: jsonb('metadata').$type<Record<string, unknown>>().notNull().default({}),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-});
+}, (t) => [
+  index('audit_logs_resource_created_idx').on(t.resourceType, t.resourceId, t.createdAt),
+  index('audit_logs_actor_created_idx').on(t.actorUserId, t.createdAt),
+]);
 
 export const payoutAccounts = pgTable('payout_accounts', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -264,7 +304,11 @@ export const withdrawals = pgTable('withdrawals', {
   currency: text('currency').notNull().default('NGN'), status: withdrawalStatusEnum('status').notNull().default('requested'),
   idempotencyKey: text('idempotency_key').notNull(), providerReference: text('provider_reference'), failureReason: text('failure_reason'),
   processedBy: uuid('processed_by').references(() => users.id), processedAt: timestamp('processed_at', { withTimezone: true }), ...timestamps,
-}, (t) => [uniqueIndex('withdrawal_idempotency_unique').on(t.idempotencyKey), index('withdrawal_promoter_status_idx').on(t.promoterId, t.status)]);
+}, (t) => [
+  uniqueIndex('withdrawal_idempotency_unique').on(t.idempotencyKey),
+  index('withdrawal_promoter_status_idx').on(t.promoterId, t.status),
+  index('withdrawal_status_created_idx').on(t.status, t.createdAt),
+]);
 
 export const disputes = pgTable('disputes', {
   id: uuid('id').primaryKey().defaultRandom(), openedByUserId: uuid('opened_by_user_id').notNull().references(() => users.id),

@@ -3,7 +3,7 @@ import { hash } from 'bcryptjs';
 import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
-import { userRoles, users } from './schema/index.js';
+import { administrators, userRoles, users } from './schema/index.js';
 
 const databaseUrl = process.env.DATABASE_URL;
 const email = process.env.ADMIN_EMAIL?.trim().toLowerCase();
@@ -25,6 +25,7 @@ try {
       displayName: 'Reelch Administrator',
     }).returning())[0];
     await tx.insert(userRoles).values({ userId: user.id, role: 'admin' }).onConflictDoNothing();
+    await tx.insert(administrators).values({ userId: user.id, isSuperAdmin: true }).onConflictDoUpdate({ target: administrators.userId, set: { isSuperAdmin: true } });
   });
   process.stdout.write(`Admin access is ready for ${email}\n`);
 } finally {

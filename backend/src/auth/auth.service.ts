@@ -1,9 +1,10 @@
 import { ConflictException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { compare, hash } from 'bcryptjs';
-import { eq } from 'drizzle-orm';
+import { and, eq, gt, isNull } from 'drizzle-orm';
+import { createHash } from 'node:crypto';
 import { DatabaseService } from '../database/database.service.js';
-import { businesses, promoters, socialAccounts, userRoles, users, verificationRequests, wallets } from '../database/schema/index.js';
+import { administratorInvitations, administrators, businesses, promoters, socialAccounts, userRoles, users, verificationRequests, wallets } from '../database/schema/index.js';
 import type { AuthenticatedUser, ReelchRole } from './auth.types.js';
 
 type RegisterInput = {
@@ -52,12 +53,44 @@ export class AuthService {
 
   async login(input: { email: string; password: string }) {
     const email = input.email?.trim().toLowerCase();
-    const user = await this.database.db.query.users.findFirst({ where: eq(users.email, email), with: undefined });
-    if (!user || !user.isActive || !(await compare(input.password ?? '', user.passwordHash))) {
+    const user = await this.database.db.query.users.findFirst({
+      columns: { id: true, email: true, passwordHash: true, isActive: true },
+      where: eq(users.email, email),
+    });
+    if (!user || !user.isActive) {
       throw new UnauthorizedException('Invalid email or password');
     }
-    const roles = await this.database.db.select({ role: userRoles.role }).from(userRoles).where(eq(userRoles.userId, user.id));
+    const [passwordValid, roles] = await Promise.all([
+      compare(input.password ?? '', user.passwordHash),
+      this.database.db.select({ role: userRoles.role }).from(userRoles).where(eq(userRoles.userId, user.id)),
+    ]);
+    if (!passwordValid) throw new UnauthorizedException('Invalid email or password');
     return this.issueToken(user.id, user.email, roles.map(({ role }) => role));
+  }
+
+  async administratorInvitation(token: string) {
+    const invitation = await this.validAdministratorInvitation(token);
+    return { email: invitation.email, expiresAt: invitation.expiresAt };
+  }
+
+  async acceptAdministratorInvitation(input: { token: string; displayName: string; password: string }) {
+    if (!input.displayName?.trim() || input.password?.length < 12) {
+      throw new ConflictException('Your name and a password of at least 12 characters are required');
+    }
+    const invitation = await this.validAdministratorInvitation(input.token);
+    const passwordHash = await hash(input.password, 12);
+    const user = await this.database.db.transaction(async (tx) => {
+      const [claimed] = await tx.update(administratorInvitations).set({ acceptedAt: new Date() }).where(and(
+        eq(administratorInvitations.id, invitation.id), isNull(administratorInvitations.acceptedAt),
+        isNull(administratorInvitations.revokedAt), gt(administratorInvitations.expiresAt, new Date()),
+      )).returning();
+      if (!claimed) throw new ConflictException('This invitation is no longer available');
+      const [created] = await tx.insert(users).values({ email: invitation.email, passwordHash, displayName: input.displayName.trim() }).returning();
+      await tx.insert(userRoles).values({ userId: created.id, role: 'admin' });
+      await tx.insert(administrators).values({ userId: created.id, invitedByUserId: invitation.invitedByUserId });
+      return created;
+    });
+    return this.issueToken(user.id, user.email, ['admin']);
   }
 
   async profile(authenticated: AuthenticatedUser) {
@@ -106,5 +139,16 @@ export class AuthService {
 
   private async issueToken(id: string, email: string, roles: ReelchRole[]) {
     return { accessToken: await this.jwt.signAsync({ id, email, roles }), user: { id, email, roles } };
+  }
+
+  private async validAdministratorInvitation(token: string) {
+    if (!token) throw new UnauthorizedException('Administrator invitation token is required');
+    const tokenHash = createHash('sha256').update(token).digest('hex');
+    const invitation = await this.database.db.query.administratorInvitations.findFirst({ where: and(
+      eq(administratorInvitations.tokenHash, tokenHash), isNull(administratorInvitations.acceptedAt),
+      isNull(administratorInvitations.revokedAt), gt(administratorInvitations.expiresAt, new Date()),
+    ) });
+    if (!invitation) throw new UnauthorizedException('This administrator invitation is invalid or has expired');
+    return invitation;
   }
 }

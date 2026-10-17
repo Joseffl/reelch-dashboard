@@ -1,9 +1,9 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
-import { and, asc, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, ilike, inArray, isNull, or, sql } from 'drizzle-orm';
 import { createHash, randomBytes } from 'node:crypto';
 import { DatabaseService } from '../database/database.service.js';
 import {
-  auditLogs, businesses, campaignCreatives, campaignPromoters, campaignReservations, campaigns,
+  administratorInvitations, administrators, auditLogs, businesses, campaignCreatives, campaignPromoters, campaignReservations, campaigns,
   campaignStatusHistory, conversions, fraudFlags, ledgerEntries, ledgerTransactions,
   disputeEvidence, disputes, inboundWebhookEvents, notifications, payoutAccounts, proofSubmissions,
   paymentAttempts, proofMetricSnapshots, promoterApplications, promoters, referralLinks, socialAccounts, trackingEvents, users, verificationDocuments, verificationRequests,
@@ -23,6 +23,56 @@ export class PlatformService {
   private readonly logger = new Logger(PlatformService.name);
 
   constructor(private readonly database: DatabaseService, private readonly storage: R2StorageService, private readonly paystack: PaystackService, private readonly socialVerification: SocialVerificationService) {}
+
+  async administrators(user: AuthenticatedUser) {
+    await this.requireSuperAdmin(user.id);
+    const [members, invitations] = await Promise.all([
+      this.database.db.select({
+        userId: administrators.userId, email: users.email, displayName: users.displayName,
+        isActive: users.isActive, isSuperAdmin: administrators.isSuperAdmin, createdAt: administrators.createdAt,
+      }).from(administrators).innerJoin(users, eq(administrators.userId, users.id)).orderBy(asc(administrators.createdAt)),
+      this.database.db.select({ id: administratorInvitations.id, email: administratorInvitations.email, expiresAt: administratorInvitations.expiresAt, createdAt: administratorInvitations.createdAt })
+        .from(administratorInvitations).where(and(isNull(administratorInvitations.acceptedAt), isNull(administratorInvitations.revokedAt), gt(administratorInvitations.expiresAt, new Date()))).orderBy(desc(administratorInvitations.createdAt)),
+    ]);
+    return { members, invitations };
+  }
+
+  async inviteAdministrator(user: AuthenticatedUser, input: { email: string }) {
+    await this.requireSuperAdmin(user.id);
+    const email = input.email?.trim().toLowerCase();
+    if (!email || !email.includes('@')) throw new BadRequestException('Enter a valid email address');
+    const existingUser = await this.database.db.query.users.findFirst({ columns: { id: true }, where: eq(users.email, email) });
+    if (existingUser) throw new ConflictException('An account already exists for this email');
+    const activeInvite = await this.database.db.query.administratorInvitations.findFirst({ where: and(eq(administratorInvitations.email, email), isNull(administratorInvitations.acceptedAt), isNull(administratorInvitations.revokedAt), gt(administratorInvitations.expiresAt, new Date())) });
+    if (activeInvite) throw new ConflictException('An active invitation already exists for this email');
+    const token = randomBytes(32).toString('base64url');
+    const [invitation] = await this.database.db.insert(administratorInvitations).values({
+      email, tokenHash: this.hash(token), invitedByUserId: user.id,
+      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    }).returning({ id: administratorInvitations.id, email: administratorInvitations.email, expiresAt: administratorInvitations.expiresAt });
+    await this.audit(user, 'administrator.invited', 'administrator_invitation', invitation.id, { email });
+    const frontendUrl = (process.env.FRONTEND_URL ?? 'http://localhost:3000').replace(/\/$/, '');
+    return { ...invitation, inviteUrl: `${frontendUrl}/accept-admin-invite?token=${encodeURIComponent(token)}` };
+  }
+
+  async revokeAdministratorInvitation(user: AuthenticatedUser, invitationId: string) {
+    await this.requireSuperAdmin(user.id);
+    const [invitation] = await this.database.db.update(administratorInvitations).set({ revokedAt: new Date() }).where(and(eq(administratorInvitations.id, invitationId), isNull(administratorInvitations.acceptedAt), isNull(administratorInvitations.revokedAt))).returning();
+    if (!invitation) throw new NotFoundException('Active invitation not found');
+    await this.audit(user, 'administrator.invitation_revoked', 'administrator_invitation', invitationId, { email: invitation.email });
+    return { success: true };
+  }
+
+  async setAdministratorActive(user: AuthenticatedUser, targetUserId: string, isActive: boolean) {
+    await this.requireSuperAdmin(user.id);
+    if (user.id === targetUserId) throw new BadRequestException('You cannot change your own administrator access');
+    const target = await this.database.db.query.administrators.findFirst({ where: eq(administrators.userId, targetUserId) });
+    if (!target) throw new NotFoundException('Administrator not found');
+    if (target.isSuperAdmin && !isActive) throw new ForbiddenException('A super administrator cannot be suspended');
+    const [updated] = await this.database.db.update(users).set({ isActive, updatedAt: new Date() }).where(eq(users.id, targetUserId)).returning({ id: users.id, isActive: users.isActive });
+    await this.audit(user, isActive ? 'administrator.reactivated' : 'administrator.suspended', 'user', targetUserId);
+    return updated;
+  }
 
   async adminVerifications(input: { status?: string; query?: string; page?: number; pageSize?: number }) {
     const page = Math.max(1, Number(input.page) || 1);
@@ -646,11 +696,18 @@ export class PlatformService {
   }
 
   async processWithdrawal(user: AuthenticatedUser, withdrawalId: string, input: { outcome: 'paid' | 'failed'; providerReference?: string; reason?: string }) {
-    const withdrawal = await this.database.db.query.withdrawals.findFirst({ where: eq(withdrawals.id, withdrawalId) });
-    if (!withdrawal || !['requested', 'reviewing', 'processing'].includes(withdrawal.status)) throw new NotFoundException('Processable withdrawal not found');
     if (input.outcome === 'paid' && !input.providerReference) throw new BadRequestException('Provider reference is required');
     if (input.outcome === 'failed' && !input.reason) throw new BadRequestException('Failure reason is required');
     const result = await this.database.db.transaction(async (tx) => {
+      const [withdrawal] = await tx.update(withdrawals).set({
+        status: input.outcome,
+        providerReference: input.providerReference,
+        failureReason: input.reason,
+        processedBy: user.id,
+        processedAt: new Date(),
+        updatedAt: new Date(),
+      }).where(and(eq(withdrawals.id, withdrawalId), inArray(withdrawals.status, ['requested', 'reviewing', 'processing']))).returning();
+      if (!withdrawal) throw new ConflictException('Withdrawal has already been processed');
       if (input.outcome === 'failed') {
         const promoterWallet = await tx.query.wallets.findFirst({ where: and(eq(wallets.ownerType, 'promoter'), eq(wallets.ownerId, withdrawal.promoterId)) });
         const clearing = await tx.query.wallets.findFirst({ where: and(eq(wallets.ownerType, 'payout_clearing'), eq(wallets.ownerId, withdrawal.promoterId)) });
@@ -661,11 +718,10 @@ export class PlatformService {
           { transactionId: reversal.id, walletId: promoterWallet.id, direction: 'credit', amountKobo: withdrawal.amountKobo },
         ]);
       }
-      const [updated] = await tx.update(withdrawals).set({ status: input.outcome, providerReference: input.providerReference, failureReason: input.reason, processedBy: user.id, processedAt: new Date(), updatedAt: new Date() }).where(eq(withdrawals.id, withdrawal.id)).returning();
-      return updated;
-    });
-    await this.audit(user, `withdrawal.${input.outcome}`, 'withdrawal', withdrawal.id, { providerReference: input.providerReference, reason: input.reason });
-    const promoter = await this.database.db.query.promoters.findFirst({ where: eq(promoters.id, withdrawal.promoterId) });
+      return withdrawal;
+    }, { isolationLevel: 'serializable' });
+    await this.audit(user, `withdrawal.${input.outcome}`, 'withdrawal', result.id, { providerReference: input.providerReference, reason: input.reason });
+    const promoter = await this.database.db.query.promoters.findFirst({ where: eq(promoters.id, result.promoterId) });
     if (promoter) await this.notify(promoter.userId, 'withdrawal_updated', `Withdrawal ${input.outcome}`, input.outcome === 'paid' ? 'Your withdrawal has been processed.' : `Your withdrawal could not be processed: ${input.reason}`, { withdrawalId, outcome: input.outcome });
     return result;
   }
@@ -791,11 +847,18 @@ export class PlatformService {
   }
 
   async adminOverview() {
-    const [campaignMetrics] = await this.database.db.select({ total: sql<number>`count(*)::int`, live: sql<number>`count(*) filter (where ${campaigns.status} = 'live')::int`, verified: sql<number>`coalesce(sum(${campaigns.verifiedQuantity}), 0)::int` }).from(campaigns);
-    const [riskMetrics] = await this.database.db.select({ openFlags: sql<number>`count(*) filter (where ${fraudFlags.resolvedAt} is null)::int` }).from(fraudFlags);
-    const [userMetrics] = await this.database.db.select({ total: sql<number>`count(*)::int` }).from(users);
-    const [disputeMetrics] = await this.database.db.select({ open: sql<number>`count(*) filter (where ${disputes.status} in ('open','evidence_requested','under_review'))::int` }).from(disputes);
-    const [verificationMetrics] = await this.database.db.select({ pending: sql<number>`count(*) filter (where ${verificationRequests.status} = 'pending')::int`, businesses: sql<number>`count(*) filter (where ${verificationRequests.status} = 'pending' and ${verificationRequests.kind} = 'business')::int`, promoters: sql<number>`count(*) filter (where ${verificationRequests.status} = 'pending' and ${verificationRequests.kind} = 'promoter')::int` }).from(verificationRequests);
+    const [campaignRows, riskRows, userRows, disputeRows, verificationRows] = await Promise.all([
+      this.database.db.select({ total: sql<number>`count(*)::int`, live: sql<number>`count(*) filter (where ${campaigns.status} = 'live')::int`, verified: sql<number>`coalesce(sum(${campaigns.verifiedQuantity}), 0)::int` }).from(campaigns),
+      this.database.db.select({ openFlags: sql<number>`count(*) filter (where ${fraudFlags.resolvedAt} is null)::int` }).from(fraudFlags),
+      this.database.db.select({ total: sql<number>`count(*)::int` }).from(users),
+      this.database.db.select({ open: sql<number>`count(*) filter (where ${disputes.status} in ('open','evidence_requested','under_review'))::int` }).from(disputes),
+      this.database.db.select({ pending: sql<number>`count(*) filter (where ${verificationRequests.status} = 'pending')::int`, businesses: sql<number>`count(*) filter (where ${verificationRequests.status} = 'pending' and ${verificationRequests.kind} = 'business')::int`, promoters: sql<number>`count(*) filter (where ${verificationRequests.status} = 'pending' and ${verificationRequests.kind} = 'promoter')::int` }).from(verificationRequests),
+    ]);
+    const [campaignMetrics] = campaignRows;
+    const [riskMetrics] = riskRows;
+    const [userMetrics] = userRows;
+    const [disputeMetrics] = disputeRows;
+    const [verificationMetrics] = verificationRows;
     return { campaigns: campaignMetrics, risk: riskMetrics, users: userMetrics, disputes: disputeMetrics, verifications: verificationMetrics };
   }
 
@@ -838,6 +901,11 @@ export class PlatformService {
     const business = await this.database.db.query.businesses.findFirst({ where: eq(businesses.ownerUserId, userId) });
     if (!business) throw new ForbiddenException('Business profile required');
     return business;
+  }
+  private async requireSuperAdmin(userId: string) {
+    const administrator = await this.database.db.query.administrators.findFirst({ where: eq(administrators.userId, userId) });
+    if (!administrator?.isSuperAdmin) throw new ForbiddenException('Super administrator access is required');
+    return administrator;
   }
   private async promoterFor(userId: string) {
     const promoter = await this.database.db.query.promoters.findFirst({ where: eq(promoters.userId, userId) });

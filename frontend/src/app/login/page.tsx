@@ -26,7 +26,8 @@ export default function LoginPage() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ email: data.get("email"), password: data.get("password") }),
       });
-      const result = await response.json() as { user?: { roles: string[] }; message?: string };
+      const result = await response.json().catch(() => ({})) as { user?: { roles: string[] }; message?: string };
+      if (response.status === 503) throw new Error("Reelch is having trouble connecting right now. Please wait a moment and try again.");
       if (!response.ok || !result.user) throw new Error(result.message ?? "Unable to sign in");
       const requested = new URLSearchParams(window.location.search).get("next");
       const defaultRoute = result.user.roles.includes("admin") ? "/admin" : result.user.roles.includes("business") ? "/business" : "/promoter";
@@ -38,9 +39,9 @@ export default function LoginPage() {
       router.refresh();
     } catch (reason) {
       setError(reason instanceof DOMException && reason.name === "AbortError"
-        ? "This is taking longer than expected. Please try again."
+        ? "The connection is taking longer than expected. Please check your internet connection and try again."
         : reason instanceof TypeError
-          ? "We could not sign you in. Check your connection and try again."
+          ? "We couldn’t reach Reelch. Please check your internet connection and try again."
           : reason instanceof Error ? reason.message : "Unable to sign in");
       setLoading(false);
     } finally {
@@ -82,7 +83,7 @@ export default function LoginPage() {
                 <button type="button" onClick={() => setShowPassword((value) => !value)} className="text-black/40 hover:text-black" aria-label={showPassword ? "Hide password" : "Show password"}>{showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}</button>
               </span>
             </label>
-            {error && <p role="alert" className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p>}
+            {error && <p role="alert" className="rounded-xl bg-amber-50 px-4 py-3 text-sm font-semibold leading-6 text-amber-900">{error}</p>}
             <button disabled={loading} className="flex min-h-13 w-full items-center justify-center gap-2 rounded-xl bg-[#171811] px-5 py-3 text-sm font-bold text-white transition hover:bg-[#6558ff] disabled:cursor-wait disabled:opacity-60">
               {loading ? "Signing in…" : "Sign in"}<ArrowRight className="size-4" />
             </button>

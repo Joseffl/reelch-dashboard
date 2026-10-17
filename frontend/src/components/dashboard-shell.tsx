@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import type { ReactNode } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { DashboardSkeleton } from "@/components/loading-skeleton";
 import {
   BadgeDollarSign,
   BarChart3,
@@ -23,6 +24,7 @@ import {
   Megaphone,
   SearchCheck,
   Settings,
+  ShieldCheck,
   Scale,
   Sparkles,
   TrendingUp,
@@ -50,7 +52,8 @@ export type IconName =
   | "notifications"
   | "analytics"
   | "waitlist"
-  | "enquiries";
+  | "enquiries"
+  | "administrators";
 
 export type NavItem = { label: string; href: string; icon: IconName };
 
@@ -71,6 +74,7 @@ const icons: Record<IconName, LucideIcon> = {
   analytics: BarChart3,
   waitlist: UserPlus,
   enquiries: Inbox,
+  administrators: ShieldCheck,
 };
 
 const roleIcons: Record<string, LucideIcon> = {
@@ -80,7 +84,9 @@ const roleIcons: Record<string, LucideIcon> = {
 };
 
 type SessionProfile = { email: string; roles: string[]; verificationStatus?: string };
-const sessionCache = new Map<string, SessionProfile>();
+type CachedSession = { profile: SessionProfile; checkedAt: number };
+const sessionCache = new Map<string, CachedSession>();
+const SESSION_CACHE_TTL_MS = 60_000;
 
 function Brand() {
   return (
@@ -190,8 +196,10 @@ export function DashboardShell({ role, title, accent, navigation, children }: {
   children: ReactNode;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
-  const [user, setUser] = useState<SessionProfile | null>(() => sessionCache.get(role) ?? null);
+  const cachedSession = sessionCache.get(role);
+  const [user, setUser] = useState<SessionProfile | null>(() => cachedSession?.profile ?? null);
   const pathname = usePathname();
+  const initialPathname = useRef(pathname);
   const router = useRouter();
   const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000/api/v1";
 
@@ -201,6 +209,12 @@ export function DashboardShell({ role, title, accent, navigation, children }: {
   }, [menuOpen]);
 
   useEffect(() => {
+    const cached = sessionCache.get(role);
+    if (cached && Date.now() - cached.checkedAt < SESSION_CACHE_TTL_MS) {
+      setUser(cached.profile);
+      return;
+    }
+
     let active = true;
     fetch(`${apiUrl}/auth/me`, { credentials: "include" })
       .then(async (response) => {
@@ -220,18 +234,18 @@ export function DashboardShell({ role, title, accent, navigation, children }: {
           }
           profile.verificationStatus = onboarding.verification.status;
         }
-        sessionCache.set(role, profile);
+        sessionCache.set(role, { profile, checkedAt: Date.now() });
         if (active) setUser(profile);
       })
       .catch(() => {
         sessionCache.delete(role);
         if (active) {
           setUser(null);
-          router.replace(`/login?next=${encodeURIComponent(pathname)}`);
+          router.replace(`/login?next=${encodeURIComponent(initialPathname.current)}`);
         }
       });
     return () => { active = false; };
-  }, [apiUrl, pathname, role, router]);
+  }, [apiUrl, role, router]);
 
   async function logout() {
     await fetch(`${apiUrl}/auth/logout`, { method: "POST", credentials: "include" });
@@ -242,12 +256,7 @@ export function DashboardShell({ role, title, accent, navigation, children }: {
 
   if (!user) {
     return (
-      <main className="grid min-h-screen place-items-center bg-[#171811] text-white" aria-live="polite">
-        <div className="text-center">
-          <span className="mx-auto block size-8 animate-spin rounded-full border-2 border-white/20 border-t-[#9cff57] motion-reduce:animate-none" />
-          <p className="mt-4 text-sm font-semibold text-white/60">Loading…</p>
-        </div>
-      </main>
+      <main className="min-h-screen bg-[#171811] text-white" aria-live="polite"><DashboardSkeleton dark /></main>
     );
   }
 

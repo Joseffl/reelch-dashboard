@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
+import { DashboardSkeleton } from "@/components/loading-skeleton";
 
 const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000/api/v1";
 
@@ -171,11 +172,7 @@ export function BusinessWallet() {
   }
 
   if (!items || !wallet) {
-    return (
-      <div className="grid min-h-52 place-items-center">
-        <LoaderCircle className="size-7 animate-spin text-[#6558ff]" />
-      </div>
-    );
+    return <DashboardSkeleton />;
   }
 
   const payable = items.filter((item) => item.status === "funding_required");

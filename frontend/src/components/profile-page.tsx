@@ -2,6 +2,7 @@
 
 import { BadgeCheck, BriefcaseBusiness, Check, LoaderCircle, Mail, ShieldCheck, Sparkles } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useState } from "react";
+import { DashboardSkeleton } from "@/components/loading-skeleton";
 
 type ProfileData = {
   user: { id: string; email: string; displayName: string; isActive: boolean; createdAt: string };
@@ -39,7 +40,7 @@ export function ProfilePage() {
     finally { setBusy(false); }
   }
 
-  if (!data) return <div className="grid min-h-72 place-items-center">{error ? <p role="alert" className="rounded-xl bg-red-50 p-4 text-sm font-bold text-red-700">{error}</p> : <LoaderCircle className="size-7 animate-spin text-[#6558ff]" />}</div>;
+  if (!data) return error ? <p role="alert" className="rounded-xl bg-red-50 p-4 text-sm font-bold text-red-700">{error}</p> : <DashboardSkeleton />;
   const profile = data.roleProfile ?? {};
   const status = String(profile.verificationStatus ?? (data.user.isActive ? "active" : "suspended"));
   const RoleIcon = data.role === "admin" ? ShieldCheck : data.role === "business" ? BriefcaseBusiness : Sparkles;
