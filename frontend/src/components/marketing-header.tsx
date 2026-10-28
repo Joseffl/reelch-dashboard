@@ -34,12 +34,12 @@ export function MarketingHeader() {
     <div className="wrap nav">
       <Link href="/" className="logo">REELCH<span>.</span></Link>
       <nav aria-label="Primary navigation">{links.map(link => <Link key={link.href} href={link.href}>{link.label}</Link>)}</nav>
-      <div className="nav-actions"><Link href="/login">Sign in</Link><Link className="button dark" href="/register">Get early access <ArrowRight/></Link></div>
+      <div className="nav-actions"><Link href="/login">Sign in</Link><Link className="button dark" href="/#waitlist">Get early access <ArrowRight/></Link></div>
       <button className="menu-button" aria-label={open ? "Close navigation" : "Open navigation"} aria-expanded={open} onClick={() => setOpen(value => !value)}>{open ? <X/> : <Menu/>}</button>
     </div>
     <div className={`mobile-menu ${open ? "mobile-menu-open" : ""}`} aria-hidden={!open}>
       <nav aria-label="Mobile navigation">{links.map(link => <Link key={link.href} href={link.href} onClick={() => setOpen(false)}>{link.label}<ArrowRight/></Link>)}</nav>
-      <div><Link href="/login" className="button light" onClick={() => setOpen(false)}>Sign in</Link><Link href="/register" className="button dark" onClick={() => setOpen(false)}>Get early access <ArrowRight/></Link></div>
+      <div><Link href="/login" className="button light" onClick={() => setOpen(false)}>Sign in</Link><Link href="/#waitlist" className="button dark" onClick={() => setOpen(false)}>Get early access <ArrowRight/></Link></div>
     </div>
   </header>;
 }
