@@ -1,14 +1,15 @@
-import { Body, Controller, Get, Headers, Param, Patch, Post, Query, Redirect, Req, UnauthorizedException } from '@nestjs/common';
+import { Inject, Body, Controller, Get, Headers, HttpCode, Param, Patch, Post, Query, Redirect, Req, UnauthorizedException } from '@nestjs/common';
 import type { RawBodyRequest } from '@nestjs/common';
 import type { Request } from 'express';
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { Public, Roles } from '../auth/auth.decorators.js';
 import type { AuthenticatedRequest } from '../auth/auth.types.js';
 import { PlatformService } from './platform.service.js';
+import { JobsService } from '../jobs/jobs.service.js';
 
 @Controller()
 export class PlatformController {
-  constructor(private readonly platform: PlatformService) {}
+  constructor(@Inject(PlatformService) private readonly platform: PlatformService, @Inject(JobsService) private readonly jobs: JobsService) {}
 
   @Roles('admin')
   @Get('admin/administrators')
@@ -260,6 +261,7 @@ export class PlatformController {
 
   @Public()
   @Post('webhooks/paystack')
+  @HttpCode(200)
   async paystackWebhook(@Req() req: RawBodyRequest<Request>, @Headers('x-paystack-signature') signature: string, @Body() body: { event?: string; data?: { reference?: string } }) {
     const raw = req.rawBody; const secret = process.env.PAYSTACK_SECRET_KEY;
     if (!raw || !signature || !secret) throw new UnauthorizedException('Valid Paystack signature required');
@@ -267,6 +269,7 @@ export class PlatformController {
     const received = Buffer.from(signature);
     if (received.length !== expected.length || !timingSafeEqual(received, Buffer.from(expected))) throw new UnauthorizedException('Valid Paystack signature required');
     if (body.event === 'charge.success' && body.data?.reference) {
+      if (this.jobs.enabled) return this.jobs.enqueuePaystack(body.data.reference, createHash('sha256').update(raw).digest('hex'));
       return this.platform.processPaystackCharge(body.data.reference);
     }
     return { received: true };

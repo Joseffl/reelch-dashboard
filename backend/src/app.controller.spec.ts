@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
 import { DatabaseService } from './database/database.service.js';
+import { JobsService } from './jobs/jobs.service.js';
 
 describe('AppController', () => {
   let appController: AppController;
@@ -9,7 +10,7 @@ describe('AppController', () => {
   beforeEach(async () => {
     const app: TestingModule = await Test.createTestingModule({
       controllers: [AppController],
-      providers: [AppService, { provide: DatabaseService, useValue: { ping: vi.fn().mockResolvedValue(true) } }],
+      providers: [AppService, { provide: DatabaseService, useValue: { ping: vi.fn().mockResolvedValue(true) } }, { provide: JobsService, useValue: { enabled: false } }],
     }).compile();
 
     appController = app.get<AppController>(AppController);

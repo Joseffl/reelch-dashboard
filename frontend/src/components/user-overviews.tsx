@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowRight, LoaderCircle } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 import { useEffect, useState } from "react";
 import { DashboardSkeleton } from "@/components/loading-skeleton";
 import { EmptyPanel, Metric } from "@/components/dashboard-shell";

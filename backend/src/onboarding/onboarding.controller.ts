@@ -1,10 +1,10 @@
-import { Body, Controller, Get, Patch, Post, Req } from '@nestjs/common';
+import { Inject, Body, Controller, Get, Patch, Post, Req } from '@nestjs/common';
 import type { AuthenticatedRequest } from '../auth/auth.types.js';
 import { OnboardingService } from './onboarding.service.js';
 
 @Controller('onboarding')
 export class OnboardingController {
-  constructor(private readonly onboarding: OnboardingService) {}
+  constructor(@Inject(OnboardingService) private readonly onboarding: OnboardingService) {}
 
   @Get('status')
   status(@Req() req: AuthenticatedRequest) { return this.onboarding.status(req.user); }

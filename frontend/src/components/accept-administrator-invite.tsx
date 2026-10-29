@@ -16,13 +16,15 @@ export function AcceptAdministratorInvite({ token }: { token: string }) {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (!token) { setMessage("This invitation link is incomplete."); return; }
-    fetch(`${apiUrl}/auth/administrator-invitations/${encodeURIComponent(token)}`)
+    if (!token) return;
+    const controller = new AbortController();
+    fetch(`${apiUrl}/auth/administrator-invitations/${encodeURIComponent(token)}`, { signal: controller.signal })
       .then(async (response) => {
         const body = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(body.message ?? "This invitation is invalid or has expired.");
         setEmail(body.email); setValid(true); setMessage("");
-      }).catch((error: Error) => setMessage(error.message));
+      }).catch((error: Error) => { if (!controller.signal.aborted) setMessage(error.message); });
+    return () => controller.abort();
   }, [apiUrl, token]);
 
   async function accept(event: React.FormEvent) {
@@ -47,7 +49,7 @@ export function AcceptAdministratorInvite({ token }: { token: string }) {
         <div><label htmlFor="invite-name" className="text-sm font-bold">Full name</label><input id="invite-name" required value={displayName} onChange={(event) => setDisplayName(event.target.value)} className="mt-2 h-14 w-full rounded-xl border border-black/12 px-4 outline-none focus:border-[#6558ff]" /></div>
         <div><label htmlFor="invite-password" className="text-sm font-bold">Password</label><input id="invite-password" type="password" minLength={12} required value={password} onChange={(event) => setPassword(event.target.value)} className="mt-2 h-14 w-full rounded-xl border border-black/12 px-4 outline-none focus:border-[#6558ff]" /><p className="mt-2 text-xs text-black/45">Use at least 12 characters.</p></div>
         <button disabled={busy} className="flex h-14 w-full items-center justify-center gap-3 rounded-xl bg-[#171811] font-black text-white disabled:opacity-50">{busy ? "Creating account…" : "Accept invitation"}<ArrowRight className="size-4" /></button>
-      </form> : <div className="mt-8 rounded-xl bg-black/[0.04] p-4 text-sm text-black/60">{message}</div>}
+      </form> : <div className="mt-8 rounded-xl bg-black/[0.04] p-4 text-sm text-black/60">{token ? message : "This invitation link is incomplete."}</div>}
       {valid && message && <p className="mt-4 text-sm text-red-600">{message}</p>}
     </div>
   </main>;

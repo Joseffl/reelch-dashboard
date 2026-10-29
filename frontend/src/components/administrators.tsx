@@ -19,10 +19,14 @@ export function Administrators() {
     const response = await fetch(`${apiUrl}/admin/administrators`, { credentials: "include" });
     if (response.status === 403) throw new Error("Only a super administrator can manage administrator access.");
     if (!response.ok) throw new Error("Unable to load administrators.");
-    setData(await response.json());
+    return await response.json() as { members: Member[]; invitations: Invitation[] };
   }, [apiUrl]);
 
-  useEffect(() => { load().catch((error: Error) => setMessage(error.message)); }, [load]);
+  useEffect(() => {
+    let active = true;
+    load().then(value => { if (active) setData(value); }).catch((error: Error) => { if (active) setMessage(error.message); });
+    return () => { active = false; };
+  }, [load]);
   useEffect(() => {
     if (!inviteOpen) return;
     const close = (event: KeyboardEvent) => { if (event.key === "Escape" && !busy) setInviteOpen(false); };
@@ -48,7 +52,7 @@ export function Administrators() {
     const body = await response.json().catch(() => ({}));
     if (!response.ok) { setMessage(body.message ?? "Unable to create invitation."); setBusy(false); return; }
     setInviteUrl(body.inviteUrl); setEmail(""); setMessage("Invitation created. Copy and send this secure link to the administrator.");
-    await load(); setBusy(false);
+    setData(await load()); setBusy(false);
   }
 
   async function copyInvite() {
@@ -58,7 +62,7 @@ export function Administrators() {
 
   async function revoke(id: string) {
     await fetch(`${apiUrl}/admin/administrators/invitations/${id}/revoke`, { method: "POST", credentials: "include" });
-    await load();
+    setData(await load());
   }
 
   async function toggle(member: Member) {
@@ -67,7 +71,7 @@ export function Administrators() {
     });
     const body = await response.json().catch(() => ({}));
     if (!response.ok) { setMessage(body.message ?? "Unable to update administrator."); return; }
-    await load();
+    setData(await load());
   }
 
   return (

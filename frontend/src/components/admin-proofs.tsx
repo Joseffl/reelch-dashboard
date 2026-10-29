@@ -1,6 +1,6 @@
 "use client";
 
-import { ExternalLink, LoaderCircle } from "lucide-react";
+import { ExternalLink } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { ListSkeleton } from "@/components/loading-skeleton";
 

@@ -2,6 +2,7 @@
 
 import { ArrowLeft, ArrowRight, Check, LoaderCircle } from "lucide-react";
 import { FormEvent, useRef, useState } from "react";
+import { ProfileLinkField, normalizeProfileInput } from "./profile-link-field";
 
 const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000/api/v1";
 const countries = ["Nigeria", "Ghana", "Kenya", "South Africa", "United Kingdom", "United States", "Other"];
@@ -28,7 +29,7 @@ export function PromoterWaitlistForm() {
     if (step === 1) { continueForm(); return; }
     setBusy(true); setError("");
     const form = new FormData(event.currentTarget);
-    const body = { fullName: form.get("fullName"), email: form.get("email"), phone: form.get("phone"), country: form.get("country"), primaryPlatform: form.get("primaryPlatform"), profileUrl: form.get("profileUrl"), audienceSize: Number(form.get("audienceSize")), niches: form.getAll("niches") };
+    const body = { fullName: form.get("fullName"), email: form.get("email"), phone: form.get("phone"), country: form.get("country"), primaryPlatform: form.get("primaryPlatform"), profileUrl: normalizeProfileInput(String(form.get("profileUrl") ?? ""), true), audienceSize: Number(form.get("audienceSize")), niches: form.getAll("niches") };
     try {
       const response = await fetch(`${apiUrl}/waitlist/promoters`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
       const result = await response.json().catch(() => ({})) as { message?: string };
@@ -43,7 +44,7 @@ export function PromoterWaitlistForm() {
   return <form ref={formRef} onSubmit={submit} className="rounded-2xl bg-[#f8f7f2] p-6 text-[#171811] shadow-[0_20px_60px_rgba(0,0,0,.16)] sm:p-8">
       <div className="flex items-start justify-between gap-4 border-b border-black/10 pb-6"><div><p className="text-xs font-black uppercase tracking-[.15em] text-[#6255e7]">Join REELCH</p><h3 className="mt-2 text-2xl font-black tracking-[-.04em]">Tell us about your reach.</h3></div><span className="text-xs font-black text-black/35">{step} / 2</span></div>
     <div className="mt-7">
-      <div data-step="1" className={step === 1 ? "grid gap-5" : "hidden"}><div className="grid gap-5 sm:grid-cols-2"><Field label="Your name" name="fullName" placeholder="Full name" required /><Field label="Email" name="email" type="email" placeholder="you@example.com" required /></div><PlatformPicker /><Field label="Profile link" name="profileUrl" placeholder="instagram.com/yourname" required /></div>
+      <div data-step="1" className={step === 1 ? "grid gap-5" : "hidden"}><div className="grid gap-5 sm:grid-cols-2"><Field label="Your name" name="fullName" placeholder="Full name" required /><Field label="Email" name="email" type="email" placeholder="you@example.com" required /></div><PlatformPicker /><ProfileLinkField name="profileUrl" allowPhone /></div>
       <div data-step="2" className={step === 2 ? "grid gap-5" : "hidden"}><div className="grid gap-5 sm:grid-cols-2"><Field label="WhatsApp or phone" name="phone" type="tel" placeholder="+234…" required /><Select label="Country" name="country" options={countries} /></div><Field label="Audience size" name="audienceSize" type="number" placeholder="e.g. 2500" required /><fieldset><legend className="text-sm font-bold">What do you create? <span className="font-normal text-black/40">Optional</span></legend><div className="mt-3 flex flex-wrap gap-2">{niches.map(niche => <label key={niche} className="cursor-pointer rounded-full border border-black/10 bg-white px-3 py-2 text-xs font-bold transition has-[:checked]:border-[#6255e7] has-[:checked]:bg-[#e8e4ff] has-[:checked]:text-[#4f43cb]"><input className="sr-only" type="checkbox" name="niches" value={niche} />{niche}</label>)}</div></fieldset></div>
     </div>
     {error && <p role="alert" className="mt-5 rounded-xl bg-red-50 p-3 text-sm font-bold text-red-700">{error}</p>}

@@ -7,7 +7,7 @@
     "build": "next build --webpack",
     "start": "next start",
     "lint": "eslint",
-    "test:e2e": "node --env-file=../backend/.env ./node_modules/@playwright/test/cli.js test"
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "lucide-react": "^1.46.0",

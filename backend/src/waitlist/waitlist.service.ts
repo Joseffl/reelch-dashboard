@@ -1,7 +1,10 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { Inject, BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { and, desc, eq, ilike, or, sql } from 'drizzle-orm';
 import { DatabaseService } from '../database/database.service.js';
 import { promoterWaitlist } from '../database/schema/index.js';
+import { JobsService } from '../jobs/jobs.service.js';
+import { confirmationEmail, emailConfiguration } from '../email/email.js';
+import { normalizeProfileLink } from '../common/profile-link.js';
 
 export type JoinWaitlistInput = {
   fullName?: string;
@@ -16,7 +19,7 @@ export type JoinWaitlistInput = {
 
 @Injectable()
 export class WaitlistService {
-  constructor(private readonly database: DatabaseService) {}
+  constructor(@Inject(DatabaseService) private readonly database: DatabaseService, @Inject(JobsService) private readonly jobs: JobsService) {}
 
   async joinPromoterWaitlist(input: JoinWaitlistInput) {
     const fullName = input.fullName?.trim();
@@ -24,27 +27,30 @@ export class WaitlistService {
     const phone = input.phone?.trim();
     const country = input.country?.trim();
     const primaryPlatform = input.primaryPlatform?.trim();
-    const profileUrl = input.profileUrl?.trim();
+    const submittedProfile = input.profileUrl?.trim();
     const niches = [...new Set((input.niches ?? []).map((niche) => niche.trim()).filter(Boolean))].slice(0, 8);
     const audienceSize = Number(input.audienceSize);
 
-    if (!fullName || !email || !phone || !country || !primaryPlatform || !profileUrl) {
+    if (!fullName || !email || !phone || !country || !primaryPlatform || !submittedProfile) {
       throw new BadRequestException('Complete all required waitlist fields');
     }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new BadRequestException('Enter a valid email address');
-    if (!/^https?:\/\//i.test(profileUrl) && !/^\+?[\d\s()-]{7,}$/.test(profileUrl)) {
-      throw new BadRequestException('Enter a valid profile link or contact number');
-    }
+    const profileUrl = normalizeProfileLink(submittedProfile, true);
     if (!niches.length) throw new BadRequestException('Select at least one content niche');
     if (Number.isNaN(audienceSize) || audienceSize < 0 || !Number.isInteger(audienceSize)) {
       throw new BadRequestException('Enter a valid audience size');
     }
 
     const values = { fullName, email, phone, country, primaryPlatform, profileUrl, audienceSize, niches, updatedAt: new Date() };
-    const [entry] = await this.database.db.insert(promoterWaitlist).values(values).onConflictDoUpdate({
-      target: promoterWaitlist.email,
-      set: values,
-    }).returning({ id: promoterWaitlist.id, status: promoterWaitlist.status });
+    const payload = confirmationEmail('waitlist', fullName, email);
+    if (emailConfiguration()) await this.jobs.ready();
+    const entry = await this.database.transaction(async (tx, client) => {
+      const [saved] = await tx.insert(promoterWaitlist).values(values).onConflictDoUpdate({
+        target: promoterWaitlist.email, set: values,
+      }).returning({ id: promoterWaitlist.id, status: promoterWaitlist.status });
+      await this.jobs.enqueueEmail(`waitlist-confirmation/${saved.id}`, payload, client);
+      return saved;
+    });
 
     return { message: 'You are on the Reelch promoter waitlist.', entry };
   }

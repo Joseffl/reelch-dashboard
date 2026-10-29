@@ -211,7 +211,6 @@ export function DashboardShell({ role, title, accent, navigation, children }: {
   useEffect(() => {
     const cached = sessionCache.get(role);
     if (cached && Date.now() - cached.checkedAt < SESSION_CACHE_TTL_MS) {
-      setUser(cached.profile);
       return;
     }
 
