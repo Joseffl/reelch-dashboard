@@ -1,5 +1,9 @@
 "use client";
 
+import { PhoneField } from "./phone-field";
+
+import { useErrorToast, toast } from "@/components/toasts";
+
 import { ArrowRight, Check, LoaderCircle } from "lucide-react";
 import { FormEvent, useState } from "react";
 
@@ -7,7 +11,7 @@ const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000/api/v1"
 
 export function ContactForm() {
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+  const [, setError] = useErrorToast();
   const [complete, setComplete] = useState(false);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -19,7 +23,7 @@ export function ContactForm() {
       const response = await fetch(`${apiUrl}/contact`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
       const result = await response.json().catch(() => ({})) as { message?: string };
       if (!response.ok) throw new Error(Array.isArray(result.message) ? result.message[0] : result.message ?? "We could not send your message");
-      setComplete(true);
+      setComplete(true); toast.success("Your message has been received.");
     } catch (reason) { setError(reason instanceof Error ? reason.message : "We could not send your message"); }
     finally { setBusy(false); }
   }
@@ -31,13 +35,13 @@ export function ContactForm() {
     <div className="contact-form-fields">
       <Field label="Full name *" name="fullName" placeholder="Your full name" required/>
       <Field label="Email address *" name="email" type="email" placeholder="you@example.com" required/>
-      <Field label="Phone number" name="phone" type="tel" placeholder="+234…"/>
+      <PhoneField label="Phone number" name="phone" />
       <Field label="Company" name="company" placeholder="Company or organisation"/>
       <label>What can we help with? *<select name="enquiryType" required defaultValue=""><option value="" disabled>Select one</option><option value="business">Running a campaign</option><option value="promoter">Becoming a promoter</option><option value="support">Account support</option><option value="partnership">Partnership</option><option value="other">Something else</option></select></label>
       <Field label="Subject *" name="subject" placeholder="A short summary" required/>
       <label className="contact-message">Message *<textarea name="message" minLength={20} maxLength={5000} required placeholder="Tell us how we can help…"/></label>
     </div>
-    {error && <p className="contact-form-error" role="alert">{error}</p>}
+
     <button className="button dark contact-submit" disabled={busy}>{busy ? <><LoaderCircle className="contact-spinner"/> Sending…</> : <>Send message <ArrowRight/></>}</button>
     <small>Do not include passwords or payment credentials.</small>
   </form>;

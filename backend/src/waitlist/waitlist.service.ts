@@ -4,7 +4,7 @@ import { DatabaseService } from '../database/database.service.js';
 import { promoterWaitlist } from '../database/schema/index.js';
 import { JobsService } from '../jobs/jobs.service.js';
 import { confirmationEmail, emailConfiguration } from '../email/email.js';
-import { normalizeProfileLink } from '../common/profile-link.js';
+import { waitlistPlatforms, waitlistProfiles } from './platforms.js';
 
 export type JoinWaitlistInput = {
   fullName?: string;
@@ -12,6 +12,9 @@ export type JoinWaitlistInput = {
   phone?: string;
   country?: string;
   primaryPlatform?: string;
+  platforms?: string[];
+  profiles?: { platform: string; profileUrl?: string; phone?: string }[];
+  otherPlatform?: string;
   profileUrl?: string;
   audienceSize?: number;
   niches?: string[];
@@ -26,22 +29,22 @@ export class WaitlistService {
     const email = input.email?.trim().toLowerCase();
     const phone = input.phone?.trim();
     const country = input.country?.trim();
-    const primaryPlatform = input.primaryPlatform?.trim();
-    const submittedProfile = input.profileUrl?.trim();
+    const platforms = waitlistPlatforms(input);
+    const primaryPlatform = platforms[0];
+    const profiles = waitlistProfiles(input, platforms);
     const niches = [...new Set((input.niches ?? []).map((niche) => niche.trim()).filter(Boolean))].slice(0, 8);
     const audienceSize = Number(input.audienceSize);
 
-    if (!fullName || !email || !phone || !country || !primaryPlatform || !submittedProfile) {
+    if (!fullName || !email || !phone || !country || !primaryPlatform) {
       throw new BadRequestException('Complete all required waitlist fields');
     }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new BadRequestException('Enter a valid email address');
-    const profileUrl = normalizeProfileLink(submittedProfile, true);
-    if (!niches.length) throw new BadRequestException('Select at least one content niche');
+    const profileUrl = profiles[0].profileUrl ?? profiles[0].phone!;
     if (Number.isNaN(audienceSize) || audienceSize < 0 || !Number.isInteger(audienceSize)) {
       throw new BadRequestException('Enter a valid audience size');
     }
 
-    const values = { fullName, email, phone, country, primaryPlatform, profileUrl, audienceSize, niches, updatedAt: new Date() };
+    const values = { fullName, email, phone, country, primaryPlatform, platforms, profiles, profileUrl, audienceSize, niches, updatedAt: new Date() };
     const payload = confirmationEmail('waitlist', fullName, email);
     if (emailConfiguration()) await this.jobs.ready();
     const entry = await this.database.transaction(async (tx, client) => {

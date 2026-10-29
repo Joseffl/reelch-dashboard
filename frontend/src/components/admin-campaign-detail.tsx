@@ -1,5 +1,7 @@
 "use client";
 
+import { useErrorToast, ErrorFallback } from "@/components/toasts";
+
 import Link from "next/link";
 import { ArrowLeft, Check, ExternalLink, FileImage, LoaderCircle, Pause, RotateCcw, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
@@ -16,17 +18,17 @@ async function api<T>(path: string, init?: RequestInit) { const response = await
 function date(value?: string) { return value ? new Date(value).toLocaleDateString() : "Not set"; }
 
 export function AdminCampaignDetail({ campaignId }: { campaignId: string }) {
-  const [detail, setDetail] = useState<Detail | null>(null); const [reason, setReason] = useState(""); const [busy, setBusy] = useState(""); const [error, setError] = useState("");
-  const load = useCallback(() => api<Detail>(`/admin/campaigns/${campaignId}`).then(setDetail).catch(cause => setError(cause.message)), [campaignId]);
+  const [detail, setDetail] = useState<Detail | null>(null); const [reason, setReason] = useState(""); const [busy, setBusy] = useState(""); const [error, setError] = useErrorToast();
+  const load = useCallback(() => api<Detail>(`/admin/campaigns/${campaignId}`).then(setDetail).catch(cause => setError(cause.message)), [campaignId, setError]);
   useEffect(() => { void load(); }, [load]);
   async function moderate(decision: "approve" | "reject" | "request_changes") { setBusy(decision); setError(""); try { await api(`/admin/campaigns/${campaignId}/moderate`, { method: "POST", body: JSON.stringify({ decision, reason }) }); await load(); setReason(""); } catch (cause) { setError(cause instanceof Error ? cause.message : "Decision failed"); } finally { setBusy(""); } }
   async function pause() { setBusy("pause"); try { await api(`/admin/campaigns/${campaignId}/pause`, { method: "POST", body: JSON.stringify({ reason }) }); await load(); } catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to pause"); } finally { setBusy(""); } }
   async function view(id: string) { setBusy(id); try { const result = await api<{ url: string }>(`/admin/campaigns/${campaignId}/creatives/${id}/url`); window.open(result.url, "_blank", "noopener,noreferrer"); } catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to open image or video"); } finally { setBusy(""); } }
-  if (!detail) return error ? <p className="text-sm font-bold text-red-700">{error}</p> : <DashboardSkeleton />;
+  if (!detail) return error ? <ErrorFallback /> : <DashboardSkeleton />;
   const campaign = detail.campaign; const instructions = typeof campaign.targeting.requirements === "string" ? campaign.targeting.requirements.trim() : ""; const destination = typeof campaign.targeting.destinationUrl === "string" ? campaign.targeting.destinationUrl : ""; const category = typeof campaign.targeting.category === "string" ? campaign.targeting.category : "Not set"; const location = typeof campaign.targeting.location === "string" ? campaign.targeting.location : "Anywhere in Nigeria"; const platforms = Array.isArray(campaign.targeting.platforms) ? campaign.targeting.platforms.map(String).join(", ") : "All platforms";
   return <div>
     <Link href="/admin/campaigns" className="inline-flex items-center gap-2 text-sm font-bold text-black/55"><ArrowLeft className="size-4" /> Campaign queue</Link>
-    {error && <p className="mt-4 rounded-xl bg-red-50 p-4 text-sm font-bold text-red-700">{error}</p>}
+
     <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,1fr)_380px]">
       <div className="space-y-5">
         <section className="rounded-2xl border border-black/[0.08] bg-white p-6"><div className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-xs font-bold uppercase tracking-[.15em] text-[#6558ff]">{detail.business.name}</p><h2 className="mt-2 text-3xl font-black">{campaign.title}</h2><p className="mt-3 max-w-2xl text-sm leading-6 text-black/50">{campaign.description}</p></div><span className="rounded-full bg-black/5 px-3 py-1.5 text-xs font-bold capitalize">{campaign.status.replaceAll("_", " ")}</span></div></section>

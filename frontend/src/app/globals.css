@@ -145,3 +145,18 @@
 @media(max-width:950px){.channel-list{grid-template-columns:repeat(3,1fr)}}
 @media(max-width:650px){.channel-list{grid-template-columns:repeat(2,1fr)}}
 :where(input,textarea,select):focus-visible{outline:none;outline-offset:0}
+
+/* Mobile QA: compact rhythm, readable form controls and an isolated menu. */
+.marketing-menu-backdrop{position:fixed;inset:0;z-index:65;border:0;background:rgba(23,24,17,.32);-webkit-backdrop-filter:blur(7px);backdrop-filter:blur(7px)}
+@media(min-width:901px){.marketing-menu-backdrop{display:none}}
+@media(max-width:900px){.mobile-menu{max-height:calc(100dvh - 72px);overflow-y:auto;overscroll-behavior:contain}.navigation-open{z-index:70}.marketing-header .nav{height:72px}.mobile-menu{top:72px}}
+@media(max-width:650px){
+  input:not([type=checkbox]):not([type=radio]):not([type=hidden]),select,textarea{font-size:16px!important}
+  .hero{padding-top:28px}.hero-copy>p:last-of-type{margin-top:18px;line-height:1.6}.hero-actions{margin-top:22px}.hero-product{margin-top:32px}
+  .section{padding:52px 0}.about-hero,.contact-hero,.privacy-hero{padding:44px 0 48px}.about-hero p,.contact-hero p{margin-top:20px;line-height:1.6}
+  .footer-main{gap:28px;padding:32px 0}.footer-cta{padding:36px 0}.contact-form-layout{gap:28px}.contact-form{padding:20px}
+  .phone-field input{margin-top:0!important;border:0!important;border-radius:0!important;padding:12px!important;box-shadow:none!important;background:transparent!important}
+  .phone-field .phone-country{margin-top:0!important;border:0!important;border-right:1px solid #17181118!important;border-radius:0!important;padding:0 8px!important;width:122px!important}
+}
+
+.phone-field input{margin-top:0!important;border:0!important;border-radius:0!important;padding:12px!important;box-shadow:none!important;background:transparent!important}.phone-field .phone-country{margin-top:0!important;border:0!important;border-right:1px solid #17181118!important;border-radius:0!important;padding:0 8px!important;width:122px!important}

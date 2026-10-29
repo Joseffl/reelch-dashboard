@@ -1,0 +1,1 @@
+ALTER TABLE "promoter_waitlist" ADD COLUMN "profiles" jsonb DEFAULT '[]'::jsonb NOT NULL;

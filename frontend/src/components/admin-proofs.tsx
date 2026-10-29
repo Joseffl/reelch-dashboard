@@ -1,5 +1,7 @@
 "use client";
 
+import { useErrorToast, ErrorFallback } from "@/components/toasts";
+
 import { ExternalLink } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { ListSkeleton } from "@/components/loading-skeleton";
@@ -33,7 +35,7 @@ export function AdminProofs() {
   const [items, setItems] = useState<Row[] | null>(null);
   const [status, setStatus] = useState("submitted");
   const [busy, setBusy] = useState("");
-  const [error, setError] = useState("");
+  const [error, setError] = useErrorToast();
   const [rejecting, setRejecting] = useState("");
   const [reason, setReason] = useState("");
 
@@ -46,7 +48,7 @@ export function AdminProofs() {
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Unable to load proofs");
     }
-  }, [status]);
+  }, [status, setError]);
 
   useEffect(() => {
     let active = true;
@@ -61,7 +63,7 @@ export function AdminProofs() {
     return () => {
       active = false;
     };
-  }, [status]);
+  }, [status, setError]);
 
   async function decide(id: string, decision: "approved" | "rejected") {
     const rejectionReason = reason.trim();
@@ -100,6 +102,7 @@ export function AdminProofs() {
     }
   }
 
+  if (error && !items) return <ErrorFallback />;
   return (
     <div>
       <div className="flex flex-wrap gap-2">
@@ -121,7 +124,7 @@ export function AdminProofs() {
         ))}
       </div>
 
-      {error && <p className="mt-4 rounded-xl bg-red-50 p-4 text-sm font-bold text-red-700">{error}</p>}
+
 
       {!items ? (
         <ListSkeleton />

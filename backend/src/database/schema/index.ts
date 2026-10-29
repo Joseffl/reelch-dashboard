@@ -49,6 +49,8 @@ export const promoterWaitlist = pgTable('promoter_waitlist', {
   phone: text('phone').notNull(),
   country: text('country').notNull(),
   primaryPlatform: text('primary_platform').notNull(),
+  platforms: jsonb('platforms').$type<string[]>().notNull().default([]),
+  profiles: jsonb('profiles').$type<{ platform: string; profileUrl?: string; phone?: string }[]>().notNull().default([]),
   profileUrl: text('profile_url').notNull(),
   audienceSize: integer('audience_size'),
   niches: jsonb('niches').$type<string[]>().notNull().default([]),

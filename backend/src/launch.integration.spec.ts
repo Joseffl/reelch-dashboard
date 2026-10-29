@@ -148,9 +148,11 @@ describe.skipIf(!testUrl)('launch integration (isolated PostgreSQL)', () => {
   it('queues waitlist/account emails atomically and retries Resend without duplicate sends', async () => {
     vi.stubEnv('EMAIL_ENABLED', 'true'); vi.stubEnv('RESEND_API_KEY', 'mock-resend-key');
     vi.stubEnv('EMAIL_FROM', 'Reelch <hello@example.test>');
-    const body = { fullName: 'Waitlist User', email: `waitlist-${run}@example.test`, phone: '+2348000000000', country: 'NG', primaryPlatform: 'instagram', profileUrl: 'https://instagram.com/test', audienceSize: 100, niches: ['Technology'] };
+    const body = { fullName: 'Waitlist User', email: `waitlist-${run}@example.test`, phone: '+2348000000000', country: 'NG', primaryPlatform: 'instagram', platforms: ['Instagram', 'Other'], otherPlatform: 'Bluesky', profiles: [{ platform: 'Instagram', profileUrl: 'instagram.com/test' }, { platform: 'Other', profileUrl: 'bsky.app/profile/test' }], audienceSize: 100, niches: [] };
     const responses = await Promise.all([1, 2].map(() => request(app.getHttpServer()).post('/api/v1/waitlist/promoters').send(body)));
     expect(responses.map(response => response.status)).toEqual([201, 201]);
+    const savedWaitlist = await database.executeSql('SELECT platforms, profiles, niches, profile_url FROM promoter_waitlist WHERE id=$1', [responses[0].body.entry.id]);
+    expect(savedWaitlist.rows[0]).toMatchObject({ platforms: ['Instagram', 'Bluesky'], profiles: [{platform:'Instagram',profileUrl:'https://instagram.com/test'}, {platform:'Bluesky',profileUrl:'https://bsky.app/profile/test'}], niches: [], profile_url: 'https://instagram.com/test' });
     const key = `waitlist-confirmation/${responses[0].body.entry.id}`;
     const deliveries = await database.executeSql('SELECT id FROM email_deliveries WHERE delivery_key=$1', [key]);
     expect(deliveries.rows).toHaveLength(1);

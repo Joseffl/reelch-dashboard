@@ -71,6 +71,20 @@
       "when": 1793204709550,
       "tag": "0009_heavy_the_hand",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1793268284321,
+      "tag": "0010_thin_switch",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1793272296167,
+      "tag": "0011_worthless_the_captain",
+      "breakpoints": true
     }
   ]
 }

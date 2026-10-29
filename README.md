@@ -70,3 +70,9 @@ NestJS API at `/api/*`, and a PostgreSQL-backed worker daemon. Import the reposi
 root with the Services preset and set `NEXT_PUBLIC_API_URL=/api/v1`; provision the
 database/queues before enabling `JOBS_ENABLED=true`. The worker Dockerfile lives
 in `backend/` and uses that directory as its build context.
+
+## Mobile QA changes
+
+Promoter waitlist submissions now store multiple platforms, including a named Other platform. Apply migration `0010_thin_switch.sql` with `npm run db:migrate` before deploying the updated API. It backfills existing entries from their original primary platform. The public waitlist does not require an account; campaign participation continues to require authentication and existing verification checks.
+
+Selected waitlist platforms each collect their own profile link; WhatsApp collects an international phone number. Migration `0011_worthless_the_captain.sql` adds these associations. Existing entries keep their original single profile link.

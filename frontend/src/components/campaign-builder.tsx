@@ -1,5 +1,7 @@
 "use client";
 
+import { useErrorToast, ErrorFallback, toast } from "@/components/toasts";
+
 import Link from "next/link";
 import { ArrowLeft, ArrowRight, Check, ImagePlus, LoaderCircle, Upload } from "lucide-react";
 import { FormEvent, useEffect, useState } from "react";
@@ -19,10 +21,10 @@ export function CampaignBuilder({ campaignId }: { campaignId?: string }) {
   const [reviewing, setReviewing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [statusText, setStatusText] = useState("");
-  const [error, setError] = useState("");
+  const [error, setError] = useErrorToast();
   const router = useRouter();
 
-  useEffect(() => { if (!campaignId) return; api<{ campaign: Campaign; creatives: Creative[] }>(`/business/campaigns/${campaignId}`).then((result) => { setCampaign(result.campaign); setCreatives(result.creatives); }).catch((cause) => setError(cause.message)); }, [campaignId]);
+  useEffect(() => { if (!campaignId) return; api<{ campaign: Campaign; creatives: Creative[] }>(`/business/campaigns/${campaignId}`).then((result) => { setCampaign(result.campaign); setCreatives(result.creatives); }).catch((cause) => setError(cause.message)); }, [campaignId, setError]);
 
   async function upload(campaignRecord: Campaign, file: File) {
     setStatusText("Uploading file…");
@@ -50,7 +52,7 @@ export function CampaignBuilder({ campaignId }: { campaignId?: string }) {
       setCampaign(saved);
       if (selectedFile) await upload(saved, selectedFile);
       setSelectedFile(null);
-      setReviewing(true);
+      setReviewing(true); toast.success("Campaign saved. Review the details before submitting.");
       if (!campaignId) window.history.replaceState(null, "", `/business/campaigns/${saved.id}`);
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to save campaign"); }
     finally { setBusy(false); setStatusText(""); }
@@ -59,12 +61,13 @@ export function CampaignBuilder({ campaignId }: { campaignId?: string }) {
   async function submit() {
     if (!campaign) return;
     setBusy(true); setError("");
-    try { await api(`/business/campaigns/${campaign.id}/submit`, { method: "POST", body: "{}" }); router.replace("/business/campaigns"); router.refresh(); }
+    try { await api(`/business/campaigns/${campaign.id}/submit`, { method: "POST", body: "{}" }); toast.success("Campaign submitted for review."); router.replace("/business/campaigns"); router.refresh(); }
     catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to submit campaign"); setBusy(false); }
   }
 
   const targeting = campaign?.targeting ?? {};
-  return <div className="mx-auto max-w-4xl"><Link href="/business/campaigns" className="inline-flex items-center gap-2 text-sm font-bold text-black/55"><ArrowLeft className="size-4" /> Campaigns</Link>{error && <p role="alert" className="mt-5 rounded-xl bg-red-50 p-4 text-sm font-bold text-red-700">{error}</p>}
+  if (campaignId && !campaign && error) return <ErrorFallback />;
+  return <div className="mx-auto max-w-4xl"><Link href="/business/campaigns" className="inline-flex items-center gap-2 text-sm font-bold text-black/55"><ArrowLeft className="size-4" /> Campaigns</Link>
     {!reviewing ? <form onSubmit={save} className="mt-5 rounded-2xl border border-black/[0.08] bg-white p-5 shadow-[0_12px_45px_rgba(21,23,15,.04)] sm:p-8"><div className="flex flex-col gap-3 border-b border-black/[.08] pb-6 sm:flex-row sm:items-start sm:justify-between"><div><h2 className="text-2xl font-black tracking-[-.035em]">Campaign details</h2><p className="mt-2 text-sm text-black/48">Create a visibility campaign for audiences in Nigeria.</p></div><span className="w-fit rounded-full bg-[#d8ffbd] px-3 py-1.5 text-xs font-bold">Goal: Visibility</span></div>
       <div className="mt-7 grid gap-5 sm:grid-cols-2"><div className="sm:col-span-2"><Input label="Campaign title" name="title" defaultValue={campaign?.title} placeholder="e.g. Introduce our new savings app" required /></div><div className="sm:col-span-2"><TextArea label="Campaign description" name="description" defaultValue={campaign?.description} placeholder="Tell promoters what the campaign is about and what makes it worth sharing." required /></div><Select label="Campaign category" name="category" options={categories} defaultValue={String(targeting.category ?? "")} required /><Select label="Promoter location" name="location" options={locations} defaultValue={String(targeting.location ?? "Anywhere in Nigeria")} required /><div className="sm:col-span-2"><p className="-mt-2 text-xs leading-5 text-black/42">Choose a specific location only when the campaign needs local promoters. Otherwise, leave it open across Nigeria.</p></div><fieldset className="sm:col-span-2"><legend className="text-sm font-bold">Where promoters can publish <Required /></legend><div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">{["Instagram","TikTok","X","WhatsApp"].map(platform=><label key={platform} className="flex min-h-11 cursor-pointer items-center gap-2 rounded-xl border border-black/10 px-3 text-sm font-semibold has-[:checked]:border-[#6558ff] has-[:checked]:bg-[#edeaff]"><input type="checkbox" name="platforms" value={platform.toLowerCase()} defaultChecked={!Array.isArray(targeting.platforms)||targeting.platforms.map(String).includes(platform.toLowerCase())} className="accent-[#6558ff]"/>{platform}</label>)}</div></fieldset><Input label="Required hashtag" name="requiredHashtag" defaultValue={String(targeting.requiredHashtag ?? "")} placeholder="#YourCampaign" /><Input label="Minimum views before approval" name="minimumViews" type="number" min="0" defaultValue={String(targeting.minimumViews ?? 0)} placeholder="0" /><div className="sm:col-span-2"><Input label="Campaign link" name="destinationUrl" type="url" defaultValue={String(targeting.destinationUrl ?? "")} placeholder="https://yourwebsite.com/campaign" required /></div><Input label="Reward per approved post (₦)" name="unitPrice" type="number" min="1" defaultValue={campaign ? String(campaign.unitPriceKobo / 100) : undefined} placeholder="1500" required /><Input label="Number of posts needed" name="targetQuantity" type="number" min="1" defaultValue={campaign ? String(campaign.targetQuantity) : undefined} placeholder="100" required /><Input label="Start date" name="startsAt" type="date" defaultValue={campaign?.startsAt?.slice(0, 10)} /><Input label="End date" name="endsAt" type="date" defaultValue={campaign?.endsAt?.slice(0, 10)} /><div className="sm:col-span-2"><TextArea label="Instructions for promoters" name="requirements" defaultValue={String(targeting.requirements ?? "")} placeholder="Optional: key message, hashtags, talking points, or anything promoters should include." /></div>
         <div className="sm:col-span-2"><p className="text-sm font-bold">Campaign image or video <Required /></p><label className={`mt-2 flex min-h-44 cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed p-5 text-center transition ${selectedFile || creatives.length ? "border-green-200 bg-green-50" : "border-black/20 hover:border-[#6558ff] hover:bg-[#faf9ff]"}`}>{busy && statusText.includes("Uploading") ? <LoaderCircle className="size-7 animate-spin text-[#6558ff]" /> : selectedFile || creatives.length ? <Check className="size-7 text-green-700" /> : <Upload className="size-7 text-[#6558ff]" />}<span className="mt-3 text-sm font-black">{selectedFile?.name ?? creatives.at(-1)?.originalFilename ?? "Choose an image or video"}</span><span className="mt-1 text-xs text-black/42">JPEG, PNG, WebP, or MP4 · maximum 25 MB</span><input className="sr-only" type="file" accept="image/jpeg,image/png,image/webp,video/mp4" disabled={busy} onChange={(event) => { const file = event.target.files?.[0] ?? null; setSelectedFile(file); setError(""); }} /></label></div>
