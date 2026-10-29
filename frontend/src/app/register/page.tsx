@@ -1,5 +1,7 @@
 "use client";
 
+import { useErrorToast, toast } from "@/components/toasts";
+
 import Link from "next/link";
 import { ArrowLeft, ArrowRight, Building2, Eye, EyeOff, LockKeyhole, Mail, UserRound } from "lucide-react";
 import { FormEvent, useState } from "react";
@@ -7,7 +9,7 @@ import { useRouter } from "next/navigation";
 
 export default function RegisterPage() {
   const [role, setRole] = useState<"business" | "promoter" | null>(null);
-  const [error, setError] = useState("");
+  const [, setError] = useErrorToast();
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
@@ -44,6 +46,7 @@ export default function RegisterPage() {
       );
       const result = (await response.json()) as { message?: string };
       if (!response.ok) throw new Error(result.message ?? "Unable to create account");
+      toast.success("Your account is ready. Complete your profile to get started.");
       router.replace(`/onboarding/${role}`);
       router.refresh();
     } catch (reason) {
@@ -55,7 +58,7 @@ export default function RegisterPage() {
   return (
     <main className="grid min-h-screen bg-[#f6f5f0] lg:grid-cols-[1fr_0.9fr]">
       <section className="hidden bg-[#171811] p-12 text-white lg:flex lg:flex-col xl:p-16">
-        <Link href="/" className="text-2xl font-black tracking-[-0.08em]">
+        <Link href="/" aria-label="Reelch home" className="text-2xl font-black tracking-[-0.08em]">
           REELCH<span className="text-[#9cff57]">.</span>
         </Link>
         <div className="my-auto max-w-xl">
@@ -75,15 +78,15 @@ export default function RegisterPage() {
         <p className="text-xs text-white/30">Reelch · Built around verified outcomes</p>
       </section>
 
-      <section className="flex items-center justify-center px-5 py-10 sm:px-10 lg:py-12">
+      <section className="flex items-start justify-center px-5 py-6 sm:items-center sm:px-10 sm:py-10 lg:py-12">
         <div className="w-full max-w-md">
           <div className="flex items-center justify-between">
-            <Link href="/" className="text-xl font-black tracking-[-0.08em] lg:hidden">
+            <Link href="/" aria-label="Reelch home" className="text-xl font-black tracking-[-0.08em] lg:hidden">
               REELCH<span className="text-[#6558ff]">.</span>
             </Link>
           </div>
 
-          <p className="mt-10 text-xs font-bold uppercase tracking-[0.18em] text-[#6558ff] lg:mt-6">
+          <p className="mt-6 text-xs font-bold uppercase sm:mt-10 tracking-[0.18em] text-[#6558ff] lg:mt-6">
             {role ? "Create your login" : "Get started"}
           </p>
           <h2 className="mt-3 text-4xl font-black tracking-[-0.05em]">
@@ -160,11 +163,7 @@ export default function RegisterPage() {
               </div>
             </div>
 
-            {error && (
-              <p role="alert" className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
-                {error}
-              </p>
-            )}
+
 
             <button disabled={loading} className="flex min-h-13 w-full items-center justify-center gap-2 rounded-xl bg-[#171811] px-5 py-3 text-sm font-bold text-white transition hover:bg-[#6558ff] disabled:cursor-wait disabled:opacity-60">
               {loading ? "Creating account…" : "Create account"}

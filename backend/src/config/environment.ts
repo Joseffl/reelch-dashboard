@@ -1,3 +1,5 @@
+import { emailConfiguration } from '../email/email.js';
+
 export type Environment = {
   nodeEnv: 'development' | 'test' | 'production';
   port: number;
@@ -17,6 +19,7 @@ export function readEnvironment(
   source: NodeJS.ProcessEnv,
 ): Environment {
   const nodeEnv = source.NODE_ENV ?? 'development';
+  emailConfiguration(source);
   if (!allowedEnvironments.has(nodeEnv as Environment['nodeEnv'])) {
     throw new Error(`NODE_ENV must be development, test, or production`);
   }
@@ -36,6 +39,15 @@ export function readEnvironment(
 
   const databaseUrl = source.DATABASE_URL;
   if (nodeEnv === 'production' && !databaseUrl) throw new Error('DATABASE_URL is required in production');
+  if (nodeEnv === 'production') {
+    for (const name of ['JWT_SECRET', 'CONVERSION_WEBHOOK_SECRET'] as const) {
+      const value = source[name];
+      if (!value || value.length < 32 || /^(replace|local-|change-me)/i.test(value)) {
+        throw new Error(`${name} must contain at least 32 characters and must not be a placeholder in production`);
+      }
+    }
+    if (!frontendUrl.startsWith('https://')) throw new Error('FRONTEND_URL must use HTTPS in production');
+  }
 
   return {
     nodeEnv: nodeEnv as Environment['nodeEnv'],

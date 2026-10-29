@@ -1,5 +1,7 @@
 "use client";
 
+import { useErrorToast, ErrorFallback, useSuccessToast } from "@/components/toasts";
+
 import {
   ArrowDownLeft,
   ArrowRight,
@@ -69,8 +71,8 @@ export function BusinessWallet() {
   const [items, setItems] = useState<Campaign[] | null>(null);
   const [wallet, setWallet] = useState<Wallet | null>(null);
   const [busy, setBusy] = useState("");
-  const [notice, setNotice] = useState("");
-  const [error, setError] = useState("");
+  const setNotice = useSuccessToast();
+  const [error, setError] = useErrorToast();
   const [copied, setCopied] = useState(false);
 
   const load = useCallback(async () => {
@@ -85,7 +87,7 @@ export function BusinessWallet() {
       setItems([]);
       setError(cause instanceof Error ? cause.message : "Could not load your wallet");
     }
-  }, []);
+  }, [setError]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -113,7 +115,7 @@ export function BusinessWallet() {
       })
       .catch((cause) => setError(cause instanceof Error ? cause.message : "Payment could not be verified"))
       .finally(() => setBusy(""));
-  }, [params, load]);
+  }, [params, load, setError, setNotice]);
 
   async function createAccount() {
     setBusy("account");
@@ -172,7 +174,7 @@ export function BusinessWallet() {
   }
 
   if (!items || !wallet) {
-    return <DashboardSkeleton />;
+    return error ? <ErrorFallback /> : <DashboardSkeleton />;
   }
 
   const payable = items.filter((item) => item.status === "funding_required");
@@ -180,17 +182,8 @@ export function BusinessWallet() {
 
   return (
     <div className="mx-auto max-w-6xl space-y-5 sm:space-y-6">
-      {notice && (
-        <div className="flex items-start gap-3 rounded-2xl border border-lime-200 bg-lime-50 px-4 py-3 text-sm font-bold text-lime-900 sm:items-center">
-          <CheckCircle2 className="mt-0.5 size-5 shrink-0 sm:mt-0" />
-          {notice}
-        </div>
-      )}
-      {error && (
-        <p className="rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm font-bold text-red-700" role="alert">
-          {error}
-        </p>
-      )}
+
+
 
       <section className="overflow-hidden rounded-[1.6rem] bg-[#171811] text-white shadow-[0_18px_50px_rgba(23,24,17,.12)]">
         <div className="p-5 sm:p-7 lg:flex lg:items-center lg:justify-between lg:gap-10">

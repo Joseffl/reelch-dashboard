@@ -1,11 +1,12 @@
-import { ConflictException, Injectable, UnauthorizedException } from '@nestjs/common';
+import { Inject, ConflictException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { compare, hash } from 'bcryptjs';
+import { compare, hash } from './password.js';
 import { and, eq, gt, isNull } from 'drizzle-orm';
 import { createHash } from 'node:crypto';
 import { DatabaseService } from '../database/database.service.js';
 import { administratorInvitations, administrators, businesses, promoters, socialAccounts, userRoles, users, verificationRequests, wallets } from '../database/schema/index.js';
 import type { AuthenticatedUser, ReelchRole } from './auth.types.js';
+import { JobsService } from '../jobs/jobs.service.js';
 
 type RegisterInput = {
   email: string;
@@ -18,20 +19,23 @@ type RegisterInput = {
 
 @Injectable()
 export class AuthService {
-  constructor(private readonly database: DatabaseService, private readonly jwt: JwtService) {}
+  constructor(@Inject(DatabaseService) private readonly database: DatabaseService, @Inject(JwtService) private readonly jwt: JwtService, @Inject(JobsService) private readonly jobs: JobsService) {}
 
   async register(input: RegisterInput) {
-    const email = input.email?.trim().toLowerCase();
-    if (!email || !email.includes('@') || input.password?.length < 8 || !input.displayName?.trim()) {
-      throw new ConflictException('Valid email, display name, and password of at least 8 characters are required');
+    const email = typeof input.email === 'string' ? input.email.trim().toLowerCase() : '';
+    if (!email || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || typeof input.password !== 'string' || input.password.length < 8 || Buffer.byteLength(input.password) > 72 || typeof input.displayName !== 'string' || !input.displayName.trim() || input.displayName.length > 120) {
+      throw new ConflictException('Valid email, name, and a password of at least 8 characters (at most 72 UTF-8 bytes) are required');
     }
+    if (input.organizationName !== undefined && (typeof input.organizationName !== 'string' || input.organizationName.length > 160)) throw new ConflictException('Enter a valid business name');
+    if (input.username !== undefined && (typeof input.username !== 'string' || !/^[a-zA-Z0-9_.-]{1,60}$/.test(input.username))) throw new ConflictException('Username must contain 1–60 letters, numbers, dots, underscores or hyphens');
     if (input.role !== 'business' && input.role !== 'promoter') throw new ConflictException('Invalid registration role');
 
     const existing = await this.database.db.query.users.findFirst({ where: eq(users.email, email) });
     if (existing) throw new ConflictException('An account already exists for this email');
 
+    if (this.jobs.enabled) await this.jobs.ready();
     const passwordHash = await hash(input.password, 12);
-    const user = await this.database.db.transaction(async (tx) => {
+    const user = await this.database.transaction(async (tx, client) => {
       const [created] = await tx.insert(users).values({ email, passwordHash, displayName: input.displayName.trim() }).returning();
       await tx.insert(userRoles).values({ userId: created.id, role: input.role });
       await tx.insert(verificationRequests).values({
@@ -46,13 +50,15 @@ export class AuthService {
         const [promoter] = await tx.insert(promoters).values({ userId: created.id, username: input.username?.trim().toLowerCase() || email.split('@')[0] }).returning();
         await tx.insert(wallets).values({ ownerType: 'promoter', ownerId: promoter.id });
       }
+      await this.jobs.enqueueWelcome(created.id, client);
       return created;
     });
     return this.issueToken(user.id, user.email, [input.role]);
   }
 
   async login(input: { email: string; password: string }) {
-    const email = input.email?.trim().toLowerCase();
+    if (typeof input.email !== 'string' || typeof input.password !== 'string' || input.password.length > 1024) throw new UnauthorizedException('Invalid email or password');
+    const email = input.email.trim().toLowerCase();
     const user = await this.database.db.query.users.findFirst({
       columns: { id: true, email: true, passwordHash: true, isActive: true },
       where: eq(users.email, email),
@@ -74,7 +80,7 @@ export class AuthService {
   }
 
   async acceptAdministratorInvitation(input: { token: string; displayName: string; password: string }) {
-    if (!input.displayName?.trim() || input.password?.length < 12) {
+    if (typeof input.displayName !== 'string' || !input.displayName.trim() || typeof input.password !== 'string' || input.password.length < 12 || Buffer.byteLength(input.password) > 72) {
       throw new ConflictException('Your name and a password of at least 12 characters are required');
     }
     const invitation = await this.validAdministratorInvitation(input.token);

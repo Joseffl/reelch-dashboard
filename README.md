@@ -6,7 +6,7 @@ Reelch is a performance advertising marketplace connecting businesses with promo
 
 ```text
 frontend/   Next.js web application for Business, Promoter, and Admin experiences
-backend/    NestJS API; workers will remain a separate backend process when added
+backend/    NestJS API and a separate PostgreSQL-backed background worker
 ```
 
 The applications deliberately keep their own dependencies and lockfiles. Root scripts run checks across both without blending their source trees.
@@ -23,7 +23,14 @@ The applications deliberately keep their own dependencies and lockfiles. Root sc
 2. Copy `frontend/.env.example` to `frontend/.env.local`.
 3. Run `npm run db:migrate` from the repository root.
 4. Set `ADMIN_EMAIL` and `ADMIN_PASSWORD` temporarily, then run `npm run db:seed-admin` once.
-5. Run `npm run dev:backend` and `npm run dev:frontend` in separate terminals.
+5. Run `npm run dev:setup` once to provision the database and job queues.
+6. Run `npm run dev` to start the frontend, API and worker together. Ctrl+C stops
+   all three. This command enables jobs for local development and watches source
+   changes, including the worker; no manual build is needed.
+
+The setup command uses `backend/.env`'s `DATABASE_URL`. Choose your development
+database before running it. You can still run `dev:frontend`, `dev:backend` and
+`dev:worker` separately when needed.
 
 The API connects directly to the hosted PostgreSQL instance. A local database is not required.
 
@@ -54,3 +61,18 @@ npm run test:e2e
 Protected endpoints require `Authorization: Bearer <accessToken>`. Funding confirmation is intentionally admin-only until a payment-provider webhook adapter is selected.
 
 See [IMPLEMENTATION_PLAN.md](./IMPLEMENTATION_PLAN.md) for delivery phases and release gates.
+
+See [LAUNCH_INFRASTRUCTURE.md](./LAUNCH_INFRASTRUCTURE.md) for worker provisioning,
+deployment order, connection budgets, rate-limit/proxy configuration and load tests.
+
+The root `vercel.json` defines a single Vercel Services deployment: Next.js web,
+NestJS API at `/api/*`, and a PostgreSQL-backed worker daemon. Import the repository
+root with the Services preset and set `NEXT_PUBLIC_API_URL=/api/v1`; provision the
+database/queues before enabling `JOBS_ENABLED=true`. The worker Dockerfile lives
+in `backend/` and uses that directory as its build context.
+
+## Mobile QA changes
+
+Promoter waitlist submissions now store multiple platforms, including a named Other platform. Apply migration `0010_thin_switch.sql` with `npm run db:migrate` before deploying the updated API. It backfills existing entries from their original primary platform. The public waitlist does not require an account; campaign participation continues to require authentication and existing verification checks.
+
+Selected waitlist platforms each collect their own profile link; WhatsApp collects an international phone number. Migration `0011_worthless_the_captain.sql` adds these associations. Existing entries keep their original single profile link.

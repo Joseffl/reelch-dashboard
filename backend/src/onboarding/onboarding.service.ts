@@ -1,4 +1,5 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { normalizeProfileLink } from '../common/profile-link.js';
+import { Inject, BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { and, eq } from 'drizzle-orm';
 import type { AuthenticatedUser } from '../auth/auth.types.js';
 import { DatabaseService } from '../database/database.service.js';
@@ -20,7 +21,7 @@ type PromoterProfile = {
 
 @Injectable()
 export class OnboardingService {
-  constructor(private readonly database: DatabaseService, private readonly storage: R2StorageService) {}
+  constructor(@Inject(DatabaseService) private readonly database: DatabaseService, @Inject(R2StorageService) private readonly storage: R2StorageService) {}
 
   private requireRole(user: AuthenticatedUser, role: 'business' | 'promoter') {
     if (!user.roles.includes(role)) throw new ForbiddenException(`${role} role required`);
@@ -74,7 +75,7 @@ export class OnboardingService {
     if (!profile) throw new NotFoundException('Promoter profile not found');
     if (!input.platform?.trim() || !input.handle?.trim()) throw new BadRequestException('Platform and handle are required');
     const [account] = await this.database.db.insert(socialAccounts).values({
-      promoterId: profile.id, platform: input.platform.trim().toLowerCase(), handle: input.handle.trim(),
+      promoterId: profile.id, platform: input.platform.trim().toLowerCase(), handle: ["whatsapp", "phone number"].includes(input.platform.trim().toLowerCase()) || input.handle.trim().startsWith("@") ? input.handle.trim() : normalizeProfileLink(input.handle),
       audienceSize: Number.isInteger(input.audienceSize) && input.audienceSize! >= 0 ? input.audienceSize : undefined,
       dataSource: 'self_reported',
     }).returning();

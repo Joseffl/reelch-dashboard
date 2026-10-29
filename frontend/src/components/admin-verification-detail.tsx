@@ -1,5 +1,7 @@
 "use client";
 
+import { useErrorToast, ErrorFallback } from "@/components/toasts";
+
 import Link from "next/link";
 import { AlertTriangle, ArrowLeft, Check, ExternalLink, FileText, LoaderCircle, ShieldAlert, UserRound, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
@@ -12,8 +14,8 @@ const labels: Record<string, string> = { name: "Business name", industry: "Indus
 async function request<T>(path: string, init?: RequestInit) { const response = await fetch(`${apiUrl}${path}`, { credentials: "include", ...init, headers: { "content-type": "application/json", ...init?.headers } }); const body = await response.json().catch(() => ({})) as T & { message?: string }; if (!response.ok) throw new Error(body.message ?? "Request failed"); return body; }
 
 export function AdminVerificationDetail({ requestId }: { requestId: string }) {
-  const [detail, setDetail] = useState<Detail | null>(null); const [reason, setReason] = useState(""); const [busy, setBusy] = useState(""); const [error, setError] = useState(""); const [suspendOpen, setSuspendOpen] = useState(false); const [suspendReason, setSuspendReason] = useState("");
-  const load = useCallback(() => request<Detail>(`/admin/verifications/${requestId}`).then(setDetail).catch((cause) => setError(cause.message)), [requestId]);
+  const [detail, setDetail] = useState<Detail | null>(null); const [reason, setReason] = useState(""); const [busy, setBusy] = useState(""); const [error, setError] = useErrorToast(); const [suspendOpen, setSuspendOpen] = useState(false); const [suspendReason, setSuspendReason] = useState("");
+  const load = useCallback(() => request<Detail>(`/admin/verifications/${requestId}`).then(setDetail).catch((cause) => setError(cause.message)), [requestId, setError]);
   useEffect(() => { load(); }, [load]);
   useEffect(() => { if (!suspendOpen) return; const close = (event: KeyboardEvent) => { if (event.key === "Escape" && busy !== "user") setSuspendOpen(false); }; document.addEventListener("keydown", close); document.body.style.overflow = "hidden"; return () => { document.removeEventListener("keydown", close); document.body.style.overflow = ""; }; }, [busy, suspendOpen]);
   async function review(decision: "approved" | "rejected" | "more_information_required") { setBusy(decision); setError(""); try { await request(`/admin/verifications/${requestId}/review`, { method: "POST", body: JSON.stringify({ decision, reason }) }); await load(); setReason(""); } catch (cause) { setError(cause instanceof Error ? cause.message : "Review failed"); } finally { setBusy(""); } }
@@ -21,13 +23,13 @@ export function AdminVerificationDetail({ requestId }: { requestId: string }) {
   async function updateUser(isActive: boolean, suspensionReason?: string) { if (!detail) return false; setBusy("user"); setError(""); try { await request(`/admin/users/${detail.user.id}/status`, { method: "PATCH", body: JSON.stringify({ isActive, reason: suspensionReason }) }); await load(); return true; } catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to update account"); return false; } finally { setBusy(""); } }
   function toggleUser() { if (!detail) return; if (detail.user.isActive) { setSuspendReason(""); setSuspendOpen(true); } else { void updateUser(true); } }
   async function confirmSuspension() { const value = suspendReason.trim(); if (!value) return; if (await updateUser(false, value)) { setSuspendOpen(false); setSuspendReason(""); } }
-  if (error && !detail) return <div><Link href="/admin/verifications" className="inline-flex items-center gap-2 text-sm font-bold"><ArrowLeft className="size-4" /> Queue</Link><p role="alert" className="mt-6 rounded-xl bg-red-50 p-5 text-sm font-bold text-red-700">{error}</p></div>;
+  if (error && !detail) return <div><Link href="/admin/verifications" className="inline-flex items-center gap-2 text-sm font-bold"><ArrowLeft className="size-4" /> Queue</Link><ErrorFallback /></div>;
   if (!detail) return <DashboardSkeleton />;
   const hidden = new Set(["id", "ownerUserId", "userId", "verificationStatus", "createdAt", "updatedAt", "onboardingCompletedAt", "avatarStorageKey"]);
   const profileEntries = Object.entries(detail.profile ?? {}).filter(([key, value]) => !hidden.has(key) && value !== null && value !== "" && (!Array.isArray(value) || value.length));
   return <div>
     <Link href="/admin/verifications" className="inline-flex items-center gap-2 text-sm font-bold text-black/55 hover:text-black"><ArrowLeft className="size-4" /> Verification queue</Link>
-    {error && <p role="alert" className="mt-5 rounded-xl bg-red-50 p-4 text-sm font-bold text-red-700">{error}</p>}
+
     <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,1fr)_380px]">
       <div className="space-y-5"><section className="rounded-2xl border border-black/[0.08] bg-white p-6"><div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between"><div className="flex items-center gap-4"><span className="grid size-12 place-items-center rounded-xl bg-violet-200"><UserRound className="size-5" /></span><div><p className="text-xs font-bold uppercase tracking-[0.15em] text-[#6558ff]">{detail.request.kind}</p><h2 className="mt-1 text-2xl font-black">{detail.user.displayName}</h2><p className="text-sm text-black/45">{detail.user.email}</p></div></div><div className="flex items-center gap-2"><span className={`rounded-full px-3 py-1.5 text-xs font-bold capitalize ${detail.request.status === "approved" ? "bg-green-100 text-green-800" : detail.request.status === "rejected" ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-800"}`}>{detail.request.status.replaceAll("_", " ")}</span><button disabled={busy === "user"} onClick={toggleUser} className={`rounded-full px-3 py-1.5 text-xs font-bold ${detail.user.isActive ? "bg-black/5" : "bg-green-100 text-green-800"}`}>{detail.user.isActive ? "Suspend" : "Reactivate"}</button></div></div></section>
         <section className="rounded-2xl border border-black/[0.08] bg-white p-6"><h3 className="text-lg font-black">Submitted profile</h3><dl className="mt-5 grid gap-x-7 gap-y-5 sm:grid-cols-2">{profileEntries.map(([key, value]) => <div key={key} className={key === "description" || key === "bio" || key === "address" ? "sm:col-span-2" : ""}><dt className="text-xs font-bold uppercase tracking-[0.12em] text-black/35">{labels[key] ?? key}</dt><dd className="mt-1.5 break-words text-sm font-semibold">{Array.isArray(value) ? value.join(", ") : String(value)}</dd></div>)}</dl></section>

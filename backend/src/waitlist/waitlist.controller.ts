@@ -1,10 +1,10 @@
-import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { Inject, Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import { Public, Roles } from '../auth/auth.decorators.js';
 import { WaitlistService, type JoinWaitlistInput } from './waitlist.service.js';
 
 @Controller('waitlist')
 export class WaitlistController {
-  constructor(private readonly waitlist: WaitlistService) {}
+  constructor(@Inject(WaitlistService) private readonly waitlist: WaitlistService) {}
 
   @Post('promoters')
   @Public()

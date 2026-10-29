@@ -1,6 +1,10 @@
 "use client";
 
-import { BadgeCheck, BriefcaseBusiness, Check, LoaderCircle, Mail, ShieldCheck, Sparkles } from "lucide-react";
+import { PhoneField } from "./phone-field";
+
+import { useErrorToast, ErrorFallback, toast } from "@/components/toasts";
+
+import { BadgeCheck, BriefcaseBusiness, LoaderCircle, Mail, ShieldCheck, Sparkles } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { DashboardSkeleton } from "@/components/loading-skeleton";
 
@@ -25,22 +29,21 @@ async function api<T>(path: string, init?: RequestInit) {
 export function ProfilePage() {
   const [data, setData] = useState<ProfileData | null>(null);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [saved, setSaved] = useState(false);
-  const load = useCallback(() => api<ProfileData>("/auth/profile").then(setData).catch((cause) => setError(cause.message)), []);
+  const [error, setError] = useErrorToast();
+  const load = useCallback(() => api<ProfileData>("/auth/profile").then(setData).catch((cause) => setError(cause.message)), [setError]);
   useEffect(() => { void load(); }, [load]);
 
   async function save(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); setBusy(true); setError(""); setSaved(false);
+    event.preventDefault(); setBusy(true); setError("");
     const form = new FormData(event.currentTarget);
     const body = Object.fromEntries(form.entries()) as Record<string, unknown>;
     body.niches = form.getAll("niches");
-    try { setData(await api<ProfileData>("/auth/profile", { method: "PATCH", body: JSON.stringify(body) })); setSaved(true); window.setTimeout(() => setSaved(false), 3000); }
+    try { setData(await api<ProfileData>("/auth/profile", { method: "PATCH", body: JSON.stringify(body) })); toast.success("Profile updated successfully."); }
     catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to update profile"); }
     finally { setBusy(false); }
   }
 
-  if (!data) return error ? <p role="alert" className="rounded-xl bg-red-50 p-4 text-sm font-bold text-red-700">{error}</p> : <DashboardSkeleton />;
+  if (!data) return error ? <ErrorFallback /> : <DashboardSkeleton />;
   const profile = data.roleProfile ?? {};
   const status = String(profile.verificationStatus ?? (data.user.isActive ? "active" : "suspended"));
   const RoleIcon = data.role === "admin" ? ShieldCheck : data.role === "business" ? BriefcaseBusiness : Sparkles;
@@ -50,12 +53,12 @@ export function ProfilePage() {
     <div className="space-y-5">
       <section className="rounded-2xl border border-black/[.08] bg-white p-6 shadow-[0_12px_45px_rgba(21,23,15,.04)] sm:p-7"><div className="flex flex-col gap-5 sm:flex-row sm:items-center"><span className={`grid size-16 shrink-0 place-items-center rounded-2xl text-xl font-black ${data.role === "admin" ? "bg-orange-200" : data.role === "business" ? "bg-lime-200" : "bg-violet-200"}`}>{data.user.displayName.charAt(0).toUpperCase()}</span><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h2 className="truncate text-2xl font-black tracking-[-.035em]">{data.user.displayName}</h2><span className="inline-flex items-center gap-1 rounded-full bg-black/5 px-2.5 py-1 text-[.68rem] font-bold capitalize"><RoleIcon className="size-3" /> {data.role === "admin" ? "Operations" : data.role}</span></div><p className="mt-1 flex items-center gap-2 text-sm text-black/45"><Mail className="size-3.5" /> {data.user.email}</p></div><span className={`w-fit rounded-full px-3 py-1.5 text-xs font-bold capitalize sm:ml-auto ${status === "approved" || status === "active" ? "bg-green-100 text-green-800" : status === "pending" ? "bg-amber-100 text-amber-800" : "bg-red-100 text-red-700"}`}>{status.replaceAll("_", " ")}</span></div></section>
 
-      {error && <p role="alert" className="rounded-xl bg-red-50 p-4 text-sm font-bold text-red-700">{error}</p>}
-      {saved && <p role="status" className="flex items-center gap-2 rounded-xl bg-green-50 p-4 text-sm font-bold text-green-800"><Check className="size-4" /> Profile updated successfully</p>}
+
+
 
       <form onSubmit={save} className="rounded-2xl border border-black/[.08] bg-white p-6 shadow-[0_12px_45px_rgba(21,23,15,.04)] sm:p-7"><div><h3 className="text-lg font-black">Profile information</h3><p className="mt-1 text-sm text-black/45">Keep the information people see about you up to date.</p></div><div className="mt-7 grid gap-5 sm:grid-cols-2"><Field label="Display name" name="displayName" defaultValue={data.user.displayName} required />
-        {data.role === "business" && <><Field label="Business name" name="name" defaultValue={String(profile.name ?? "")} required /><Field label="Website" name="website" type="url" defaultValue={String(profile.website ?? "")} placeholder="https://" /><Field label="Phone number" name="phone" type="tel" defaultValue={String(profile.phone ?? "")} /><div className="sm:col-span-2"><TextArea label="About the business" name="description" defaultValue={String(profile.description ?? "")} placeholder="A short description of your business" /></div></>}
-        {data.role === "promoter" && <><Field label="Username" name="username" defaultValue={String(profile.username ?? "")} required /><Field label="Phone number" name="phone" type="tel" defaultValue={String(profile.phone ?? "")} /><Select label="Primary location" name="city" options={nigeriaLocations} defaultValue={String(profile.city ?? "")} /><div className="sm:col-span-2"><TextArea label="Bio" name="bio" defaultValue={String(profile.bio ?? "")} placeholder="Tell businesses about your audience and content" /></div><fieldset className="sm:col-span-2"><legend className="text-sm font-bold">Content niches</legend><div className="mt-3 flex flex-wrap gap-2">{niches.map((niche) => <label key={niche} className="cursor-pointer rounded-full border border-black/10 px-3 py-2 text-xs font-bold has-[:checked]:border-[#6558ff] has-[:checked]:bg-[#edeaff] has-[:checked]:text-[#5145e5]"><input type="checkbox" className="sr-only" name="niches" value={niche} defaultChecked={selectedNiches.includes(niche)} />{niche}</label>)}</div></fieldset></>}
+        {data.role === "business" && <><Field label="Business name" name="name" defaultValue={String(profile.name ?? "")} required /><Field label="Website" name="website" type="url" defaultValue={String(profile.website ?? "")} placeholder="https://" /><PhoneField label="Phone number" name="phone" defaultValue={String(profile.phone ?? "")} /><div className="sm:col-span-2"><TextArea label="About the business" name="description" defaultValue={String(profile.description ?? "")} placeholder="A short description of your business" /></div></>}
+        {data.role === "promoter" && <><Field label="Username" name="username" defaultValue={String(profile.username ?? "")} required /><PhoneField label="Phone number" name="phone" defaultValue={String(profile.phone ?? "")} /><Select label="Primary location" name="city" options={nigeriaLocations} defaultValue={String(profile.city ?? "")} /><div className="sm:col-span-2"><TextArea label="Bio" name="bio" defaultValue={String(profile.bio ?? "")} placeholder="Tell businesses about your audience and content" /></div><fieldset className="sm:col-span-2"><legend className="text-sm font-bold">Content niches</legend><div className="mt-3 flex flex-wrap gap-2">{niches.map((niche) => <label key={niche} className="cursor-pointer rounded-full border border-black/10 px-3 py-2 text-xs font-bold has-[:checked]:border-[#6558ff] has-[:checked]:bg-[#edeaff] has-[:checked]:text-[#5145e5]"><input type="checkbox" className="sr-only" name="niches" value={niche} defaultChecked={selectedNiches.includes(niche)} />{niche}</label>)}</div></fieldset></>}
       </div><button disabled={busy} className="mt-7 flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#171811] px-5 text-sm font-bold text-white disabled:opacity-50 sm:w-auto">{busy ? <><LoaderCircle className="size-4 animate-spin" /> Saving changes…</> : "Save changes"}</button></form>
     </div>
 

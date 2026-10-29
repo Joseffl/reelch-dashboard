@@ -8,6 +8,22 @@ const timestamps = {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 };
 
+export const emailDeliveries = pgTable('email_deliveries', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  deliveryKey: text('delivery_key').notNull(),
+  payload: jsonb('payload').$type<import('../../email/email.js').EmailPayload>().notNull(),
+  firstAttemptAt: timestamp('first_attempt_at', { withTimezone: true }),
+  acceptedAt: timestamp('accepted_at', { withTimezone: true }),
+  providerMessageId: text('provider_message_id'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, t => [uniqueIndex('email_deliveries_key_unique').on(t.deliveryKey)]);
+
+export const requestRateLimits = pgTable('request_rate_limits', {
+  key: text('key').primaryKey(),
+  hits: integer('hits').notNull(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+}, t => [index('request_rate_limits_expiry_idx').on(t.expiresAt)]);
+
 export const roleEnum = pgEnum('user_role', ['business', 'promoter', 'admin']);
 export const verificationStatusEnum = pgEnum('verification_status', ['draft', 'pending', 'approved', 'rejected', 'more_information_required']);
 export const campaignStatusEnum = pgEnum('campaign_status', ['draft', 'pending_review', 'approved', 'funding_required', 'scheduled', 'live', 'paused', 'completed', 'rejected', 'cancelled']);
@@ -33,6 +49,8 @@ export const promoterWaitlist = pgTable('promoter_waitlist', {
   phone: text('phone').notNull(),
   country: text('country').notNull(),
   primaryPlatform: text('primary_platform').notNull(),
+  platforms: jsonb('platforms').$type<string[]>().notNull().default([]),
+  profiles: jsonb('profiles').$type<{ platform: string; profileUrl?: string; phone?: string }[]>().notNull().default([]),
   profileUrl: text('profile_url').notNull(),
   audienceSize: integer('audience_size'),
   niches: jsonb('niches').$type<string[]>().notNull().default([]),

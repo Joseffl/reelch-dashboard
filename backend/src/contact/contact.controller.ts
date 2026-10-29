@@ -1,10 +1,10 @@
-import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { Inject, Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import { Public, Roles } from '../auth/auth.decorators.js';
 import { ContactService, type CreateContactEnquiryInput } from './contact.service.js';
 
 @Controller('contact')
 export class ContactController {
-  constructor(private readonly contact: ContactService) {}
+  constructor(@Inject(ContactService) private readonly contact: ContactService) {}
 
   @Post()
   @Public()

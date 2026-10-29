@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Check, Copy, ShieldCheck, UserPlus, X } from "lucide-react";
+import { toast } from "@/components/toasts";
 
 type Member = { userId: string; email: string; displayName: string; isActive: boolean; isSuperAdmin: boolean; createdAt: string };
 type Invitation = { id: string; email: string; expiresAt: string; createdAt: string };
@@ -11,7 +12,6 @@ export function Administrators() {
   const [data, setData] = useState<{ members: Member[]; invitations: Invitation[] } | null>(null);
   const [email, setEmail] = useState("");
   const [inviteUrl, setInviteUrl] = useState("");
-  const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
 
@@ -19,10 +19,14 @@ export function Administrators() {
     const response = await fetch(`${apiUrl}/admin/administrators`, { credentials: "include" });
     if (response.status === 403) throw new Error("Only a super administrator can manage administrator access.");
     if (!response.ok) throw new Error("Unable to load administrators.");
-    setData(await response.json());
+    return await response.json() as { members: Member[]; invitations: Invitation[] };
   }, [apiUrl]);
 
-  useEffect(() => { load().catch((error: Error) => setMessage(error.message)); }, [load]);
+  useEffect(() => {
+    let active = true;
+    load().then(value => { if (active) setData(value); }).catch((error: Error) => { if (active) toast.error(error); });
+    return () => { active = false; };
+  }, [load]);
   useEffect(() => {
     if (!inviteOpen) return;
     const close = (event: KeyboardEvent) => { if (event.key === "Escape" && !busy) setInviteOpen(false); };
@@ -32,42 +36,52 @@ export function Administrators() {
   }, [busy, inviteOpen]);
 
   function openInvite() {
-    setEmail(""); setInviteUrl(""); setMessage(""); setInviteOpen(true);
+    setEmail(""); setInviteUrl(""); setInviteOpen(true);
   }
 
   function closeInvite() {
     if (busy) return;
-    setInviteOpen(false); setEmail(""); setInviteUrl(""); setMessage("");
+    setInviteOpen(false); setEmail(""); setInviteUrl("");
   }
 
   async function invite(event: React.FormEvent) {
-    event.preventDefault(); setBusy(true); setMessage(""); setInviteUrl("");
+    event.preventDefault(); setBusy(true); setInviteUrl("");
+    try {
     const response = await fetch(`${apiUrl}/admin/administrators/invitations`, {
       method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email }),
     });
     const body = await response.json().catch(() => ({}));
-    if (!response.ok) { setMessage(body.message ?? "Unable to create invitation."); setBusy(false); return; }
-    setInviteUrl(body.inviteUrl); setEmail(""); setMessage("Invitation created. Copy and send this secure link to the administrator.");
-    await load(); setBusy(false);
+    if (!response.ok) throw new Error(body.message ?? "Unable to create invitation.");
+    setInviteUrl(body.inviteUrl); setEmail(""); toast.success("Invitation created. Copy and share the secure link.");
+    setData(await load());
+    } catch (error) { toast.error(error); }
+    finally { setBusy(false); }
   }
 
   async function copyInvite() {
+    try {
     await navigator.clipboard.writeText(inviteUrl);
-    setMessage("Invitation link copied.");
+    toast.success("Invitation link copied.");
+    } catch { toast.error("Could not copy the invitation link. Please select and copy it manually."); }
   }
 
   async function revoke(id: string) {
-    await fetch(`${apiUrl}/admin/administrators/invitations/${id}/revoke`, { method: "POST", credentials: "include" });
-    await load();
+    try {
+    const response = await fetch(`${apiUrl}/admin/administrators/invitations/${id}/revoke`, { method: "POST", credentials: "include" });
+    if (!response.ok) throw new Error("Unable to revoke this invitation.");
+    setData(await load());
+    } catch (error) { toast.error(error); }
   }
 
   async function toggle(member: Member) {
+    try {
     const response = await fetch(`${apiUrl}/admin/administrators/${member.userId}/status`, {
       method: "PATCH", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ isActive: !member.isActive }),
     });
     const body = await response.json().catch(() => ({}));
-    if (!response.ok) { setMessage(body.message ?? "Unable to update administrator."); return; }
-    await load();
+    if (!response.ok) throw new Error(body.message ?? "Unable to update administrator.");
+    setData(await load());
+    } catch (error) { toast.error(error); }
   }
 
   return (
@@ -77,7 +91,7 @@ export function Administrators() {
           <div><h2 className="text-2xl font-black tracking-[-0.03em]">Current administrators</h2><p className="mt-1 text-sm text-black/45">Manage who can access Reelch operations.</p></div>
           <button type="button" onClick={openInvite} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-full bg-[#171811] px-5 text-sm font-bold text-white transition hover:bg-[#6558ff]"><UserPlus className="size-4" /> Invite admin</button>
         </div>
-        {message && !inviteOpen && <p className="mt-5 rounded-xl bg-amber-50 p-4 text-sm font-semibold text-amber-900">{message}</p>}
+
         <div className="mt-5 divide-y divide-black/8">
           {data?.members.map((member) => <div key={member.userId} className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center">
             <span className="grid size-11 place-items-center rounded-full bg-[#eeeaff] text-[#6558ff]"><ShieldCheck className="size-5" /></span>
@@ -85,7 +99,7 @@ export function Administrators() {
             <span className={`w-fit rounded-full px-3 py-1 text-xs font-bold ${member.isSuperAdmin ? "bg-[#e9ffd9] text-[#315d13]" : "bg-[#eeeaff] text-[#5145d8]"}`}>{member.isSuperAdmin ? "Super administrator" : "Administrator"}</span>
             {!member.isSuperAdmin && <button onClick={() => toggle(member)} className="rounded-full border border-black/12 px-4 py-2 text-xs font-bold hover:bg-black/5">{member.isActive ? "Suspend" : "Reactivate"}</button>}
           </div>)}
-          {!data && !message && <p className="py-8 text-sm text-black/45">Loading administrators…</p>}
+          {!data && <p className="py-8 text-sm text-black/45">Loading administrators…</p>}
         </div>
       </section>
 
@@ -101,7 +115,7 @@ export function Administrators() {
             {!inviteUrl && <button disabled={busy} className="mt-4 flex h-13 w-full items-center justify-center rounded-xl bg-[#171811] font-black text-white transition hover:bg-[#6558ff] disabled:opacity-50">{busy ? "Creating invitation…" : "Create invitation"}</button>}
           </form>
           {inviteUrl && <div className="mt-5 rounded-2xl bg-[#f3f1ea] p-4"><p className="text-xs font-bold uppercase tracking-[.12em] text-black/40">Invitation link</p><div className="mt-2 flex gap-2"><input readOnly value={inviteUrl} className="min-w-0 flex-1 rounded-xl border border-black/8 bg-white px-3 text-xs text-black/60" /><button type="button" onClick={copyInvite} className="grid size-12 shrink-0 place-items-center rounded-xl bg-[#171811] text-white" aria-label="Copy invitation link"><Copy className="size-4" /></button></div></div>}
-          {message && <p className="mt-4 rounded-xl bg-[#e9ffd9] p-4 text-sm font-semibold leading-6 text-[#315d13]">{message}</p>}
+
         </section>
       </div>}
     </div>

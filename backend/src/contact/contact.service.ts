@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { Inject, BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { and, desc, eq, ilike, or, sql } from 'drizzle-orm';
 import { DatabaseService } from '../database/database.service.js';
 import { contactEnquiries } from '../database/schema/index.js';
@@ -18,7 +18,7 @@ const statuses = ['new', 'in_progress', 'resolved', 'spam'];
 
 @Injectable()
 export class ContactService {
-  constructor(private readonly database: DatabaseService) {}
+  constructor(@Inject(DatabaseService) private readonly database: DatabaseService) {}
 
   async create(input: CreateContactEnquiryInput) {
     const fullName = input.fullName?.trim();

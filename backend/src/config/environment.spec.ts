@@ -30,4 +30,9 @@ describe('readEnvironment', () => {
       'DATABASE_URL is required in production',
     );
   });
+
+  it('rejects insecure production secrets', () => {
+    expect(() => readEnvironment({ NODE_ENV: 'production', DATABASE_URL: 'postgres://example' })).toThrow('JWT_SECRET');
+    expect(() => readEnvironment({ NODE_ENV: 'production', DATABASE_URL: 'postgres://example', JWT_SECRET: 'x'.repeat(32) })).toThrow('CONVERSION_WEBHOOK_SECRET');
+  });
 });

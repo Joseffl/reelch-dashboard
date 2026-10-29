@@ -1,8 +1,13 @@
 import { expect, test } from "@playwright/test";
 import { Pool } from "pg";
 
+const testDatabaseUrl = process.env.TEST_DATABASE_URL;
+if (!testDatabaseUrl || !["127.0.0.1", "localhost"].includes(new URL(testDatabaseUrl).hostname)) {
+  throw new Error("Browser tests require TEST_DATABASE_URL pointing to an isolated localhost database");
+}
+
 async function removeTestBusiness(email: string) {
-  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  const pool = new Pool({ connectionString: testDatabaseUrl });
   try {
     await pool.query("begin");
     const user = await pool.query<{ id: string }>("select id from users where email = $1", [email]);
@@ -23,7 +28,7 @@ async function removeTestBusiness(email: string) {
 }
 
 async function removeTestPromoter(email: string) {
-  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  const pool = new Pool({ connectionString: testDatabaseUrl });
   try {
     await pool.query("begin");
     const user = await pool.query<{ id: string }>("select id from users where email = $1", [email]);
@@ -44,7 +49,7 @@ async function removeTestPromoter(email: string) {
 }
 
 async function markVerificationPending(email: string) {
-  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  const pool = new Pool({ connectionString: testDatabaseUrl });
   try {
     await pool.query("update verification_requests set status = 'pending', updated_at = now() where user_id = (select id from users where email = $1)", [email]);
   } finally {
@@ -67,7 +72,7 @@ test("admin can sign in and navigate the sidebar", async ({ page }) => {
   expect(loginResponse.status(), await loginResponse.text()).toBe(201);
 
   await expect(page).toHaveURL(/\/admin$/);
-  await expect(page.getByRole("heading", { name: "Trust is an operating system." })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Overview", exact: true, level: 1 })).toBeVisible();
 
   await page.getByRole("link", { name: "Campaigns" }).click();
   await expect(page).toHaveURL(/\/admin\/campaigns$/);

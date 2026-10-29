@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { Toaster } from "@/components/toasts";
 
 export const metadata: Metadata = {
   title: "Reelch | Performance advertising that rewards results",
@@ -9,8 +10,8 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="en" className="h-full antialiased">
-      <body className="min-h-full flex flex-col">{children}</body>
+    <html lang="en" data-scroll-behavior="smooth" className="h-full antialiased">
+      <body className="min-h-full flex flex-col">{children}<Toaster /></body>
     </html>
   );
 }

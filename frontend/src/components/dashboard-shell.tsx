@@ -1,4 +1,5 @@
 "use client";
+import { toast } from "@/components/toasts";
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -88,10 +89,11 @@ type CachedSession = { profile: SessionProfile; checkedAt: number };
 const sessionCache = new Map<string, CachedSession>();
 const SESSION_CACHE_TTL_MS = 60_000;
 
-function Brand() {
+function Brand({ onNavigate }: { onNavigate?: () => void }) {
   return (
     <Link
       href="/"
+      onClick={onNavigate}
       className="inline-flex items-center rounded-lg text-[1.35rem] font-black tracking-[-0.08em] text-white focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white"
       aria-label="Reelch home"
     >
@@ -115,7 +117,7 @@ function SidebarContent({ role, accent, navigation, userEmail, onLogout, onNavig
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between px-6 pb-8 pt-7 lg:px-7">
-        <Brand />
+        <Brand onNavigate={onNavigate} />
         {onNavigate && (
           <button
             type="button"
@@ -211,7 +213,6 @@ export function DashboardShell({ role, title, accent, navigation, children }: {
   useEffect(() => {
     const cached = sessionCache.get(role);
     if (cached && Date.now() - cached.checkedAt < SESSION_CACHE_TTL_MS) {
-      setUser(cached.profile);
       return;
     }
 
@@ -241,6 +242,7 @@ export function DashboardShell({ role, title, accent, navigation, children }: {
         sessionCache.delete(role);
         if (active) {
           setUser(null);
+          toast.error("Please sign in to access your workspace.");
           router.replace(`/login?next=${encodeURIComponent(initialPathname.current)}`);
         }
       });
@@ -248,10 +250,13 @@ export function DashboardShell({ role, title, accent, navigation, children }: {
   }, [apiUrl, role, router]);
 
   async function logout() {
-    await fetch(`${apiUrl}/auth/logout`, { method: "POST", credentials: "include" });
-    sessionCache.clear();
-    router.replace("/login");
-    router.refresh();
+    try {
+      const response = await fetch(`${apiUrl}/auth/logout`, { method: "POST", credentials: "include" });
+      if (!response.ok) throw new Error("Unable to sign out. Please try again.");
+      sessionCache.clear();
+      router.replace("/login");
+      router.refresh();
+    } catch (error) { toast.error(error); }
   }
 
   if (!user) {
@@ -291,7 +296,7 @@ export function DashboardShell({ role, title, accent, navigation, children }: {
       )}
 
       <main className="min-w-0">
-        <div className="mx-auto w-full max-w-[1500px] px-4 py-6 sm:px-7 sm:py-8 lg:px-10 lg:py-9 xl:px-14">
+        <div className="mx-auto w-full max-w-[1500px] px-4 py-4 sm:px-7 sm:py-8 lg:px-10 lg:py-9 xl:px-14">
           <div className="border-b border-black/10 pb-5 sm:pb-6">
             <h1 className="text-2xl font-black tracking-[-0.035em] sm:text-3xl">{title}</h1>
           </div>

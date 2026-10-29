@@ -1,12 +1,14 @@
 "use client";
 
+import { useErrorToast, toast } from "@/components/toasts";
+
 import Link from "next/link";
 import { ArrowRight, Eye, EyeOff, LockKeyhole, Mail } from "lucide-react";
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 
 export default function LoginPage() {
-  const [error, setError] = useState("");
+  const [, setError] = useErrorToast();
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const router = useRouter();
@@ -35,6 +37,7 @@ export default function LoginPage() {
       if (requestedRole && ["admin", "business", "promoter"].includes(requestedRole) && !result.user.roles.includes(requestedRole)) {
         throw new Error(`This account does not have ${requestedRole} access. Sign in with a ${requestedRole} account or continue to your ${result.user.roles[0]} workspace.`);
       }
+      toast.success("Signed in successfully.");
       router.replace(requested?.startsWith("/") ? requested : defaultRoute);
       router.refresh();
     } catch (reason) {
@@ -52,7 +55,7 @@ export default function LoginPage() {
   return (
     <main className="grid min-h-screen bg-[#f6f5f0] lg:grid-cols-[1fr_0.9fr]">
       <section className="hidden bg-[#171811] p-12 text-white lg:flex lg:flex-col xl:p-16">
-        <Link href="/" className="text-2xl font-black tracking-[-0.08em]">REELCH<span className="text-[#9cff57]">.</span></Link>
+        <Link href="/" aria-label="Reelch home" className="text-2xl font-black tracking-[-0.08em]">REELCH<span className="text-[#9cff57]">.</span></Link>
         <div className="my-auto max-w-xl">
           <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#9cff57]">Verified performance</p>
           <h1 className="mt-5 text-6xl font-black leading-[0.92] tracking-[-0.06em] xl:text-7xl">One login.<br />The right workspace.</h1>
@@ -62,7 +65,7 @@ export default function LoginPage() {
       </section>
       <section className="flex items-center justify-center px-5 py-12 sm:px-10">
         <div className="w-full max-w-md">
-          <Link href="/" className="text-xl font-black tracking-[-0.08em] lg:hidden">REELCH<span className="text-[#6558ff]">.</span></Link>
+          <Link href="/" aria-label="Reelch home" className="text-xl font-black tracking-[-0.08em] lg:hidden">REELCH<span className="text-[#6558ff]">.</span></Link>
           <p className="mt-12 text-xs font-bold uppercase tracking-[0.18em] text-[#6558ff] lg:mt-0">Welcome back</p>
           <h2 className="mt-3 text-4xl font-black tracking-[-0.05em]">Sign in to Reelch</h2>
           {/* <p className="mt-3 text-sm leading-6 text-black/50">Use the account created for your workspace.</p> */}
@@ -83,7 +86,7 @@ export default function LoginPage() {
                 <button type="button" onClick={() => setShowPassword((value) => !value)} className="text-black/40 hover:text-black" aria-label={showPassword ? "Hide password" : "Show password"}>{showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}</button>
               </span>
             </label>
-            {error && <p role="alert" className="rounded-xl bg-amber-50 px-4 py-3 text-sm font-semibold leading-6 text-amber-900">{error}</p>}
+
             <button disabled={loading} className="flex min-h-13 w-full items-center justify-center gap-2 rounded-xl bg-[#171811] px-5 py-3 text-sm font-bold text-white transition hover:bg-[#6558ff] disabled:cursor-wait disabled:opacity-60">
               {loading ? "Signing in…" : "Sign in"}<ArrowRight className="size-4" />
             </button>

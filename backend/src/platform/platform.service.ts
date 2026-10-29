@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
+import { Inject, BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { and, asc, desc, eq, gt, ilike, inArray, isNull, or, sql } from 'drizzle-orm';
 import { createHash, randomBytes } from 'node:crypto';
 import { DatabaseService } from '../database/database.service.js';
@@ -22,7 +22,7 @@ const campaignLocations = new Set(['Anywhere in Nigeria', 'Abia', 'Adamawa', 'Ak
 export class PlatformService {
   private readonly logger = new Logger(PlatformService.name);
 
-  constructor(private readonly database: DatabaseService, private readonly storage: R2StorageService, private readonly paystack: PaystackService, private readonly socialVerification: SocialVerificationService) {}
+  constructor(@Inject(DatabaseService) private readonly database: DatabaseService, @Inject(R2StorageService) private readonly storage: R2StorageService, @Inject(PaystackService) private readonly paystack: PaystackService, @Inject(SocialVerificationService) private readonly socialVerification: SocialVerificationService) {}
 
   async administrators(user: AuthenticatedUser) {
     await this.requireSuperAdmin(user.id);
@@ -427,12 +427,16 @@ export class PlatformService {
       const clearing = clearingCreated ?? await tx.query.wallets.findFirst({ where: and(eq(wallets.ownerType, 'payment_clearing'), eq(wallets.ownerId, account.businessId)) });
       if (!clearing) throw new Error('Payment clearing wallet not found');
       const amountKobo = Number(verified.amount);
-      const [transaction] = await tx.insert(ledgerTransactions).values({ type: 'wallet_deposit', reference: verified.reference, idempotencyKey, metadata: { provider: 'paystack', channel: verified.channel } }).returning();
+      const [transaction] = await tx.insert(ledgerTransactions).values({ type: 'wallet_deposit', reference: verified.reference, idempotencyKey, metadata: { provider: 'paystack', channel: verified.channel } }).onConflictDoNothing({ target: ledgerTransactions.idempotencyKey }).returning();
+      if (!transaction) {
+        const existing = await tx.query.ledgerTransactions.findFirst({ where: eq(ledgerTransactions.idempotencyKey, idempotencyKey) });
+        return { received: true, transactionId: existing?.id };
+      }
       await tx.insert(ledgerEntries).values([
         { transactionId: transaction.id, walletId: clearing.id, direction: 'debit', amountKobo, currency: verified.currency },
         { transactionId: transaction.id, walletId: wallet.id, direction: 'credit', amountKobo, currency: verified.currency },
       ]);
-      await this.notify((await tx.query.businesses.findFirst({ where: eq(businesses.id, account.businessId) }))!.ownerUserId, 'wallet_funded', 'Wallet funded', `Your wallet received ₦${(amountKobo / 100).toLocaleString()}.`, { reference: verified.reference, amountKobo });
+      await tx.insert(notifications).values({ userId: (await tx.query.businesses.findFirst({ where: eq(businesses.id, account.businessId) }))!.ownerUserId, type: 'wallet_funded', title: 'Wallet funded', body: `Your wallet received ₦${(amountKobo / 100).toLocaleString()}.`, data: { reference: verified.reference, amountKobo } });
       return { received: true, transactionId: transaction.id };
     });
   }
