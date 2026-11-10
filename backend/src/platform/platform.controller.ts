@@ -1,4 +1,4 @@
-import { Inject, Body, Controller, Get, Headers, HttpCode, Param, Patch, Post, Query, Redirect, Req, UnauthorizedException } from '@nestjs/common';
+import { Inject, Body, Controller, Delete, Get, Headers, HttpCode, Param, Patch, Post, Query, Redirect, Req, UnauthorizedException } from '@nestjs/common';
 import type { RawBodyRequest } from '@nestjs/common';
 import type { Request } from 'express';
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
@@ -185,6 +185,24 @@ export class PlatformController {
   @Roles('promoter')
   @Get('promoter/earnings')
   promoterEarnings(@Req() req: AuthenticatedRequest) { return this.platform.promoterEarnings(req.user); }
+
+  @Roles('promoter')
+  @Get('promoter/social/connections')
+  promoterSocialConnections(@Req() req: AuthenticatedRequest) { return this.platform.promoterSocialConnections(req.user); }
+
+  @Roles('promoter')
+  @Post('promoter/social/tiktok/connect')
+  tiktokConnect(@Req() req: AuthenticatedRequest) { return this.platform.tiktokConnectUrl(req.user); }
+
+  // TikTok redirects the browser here after the promoter approves or cancels. The signed state identifies them.
+  @Public()
+  @Get('promoter/social/tiktok/callback')
+  @Redirect()
+  async tiktokCallback(@Query() query: { code?: string; state?: string; error?: string; error_description?: string }) { return { url: await this.platform.completeTiktokConnection(query), statusCode: 302 }; }
+
+  @Roles('promoter')
+  @Delete('promoter/social/tiktok')
+  disconnectTiktok(@Req() req: AuthenticatedRequest) { return this.platform.disconnectTiktok(req.user); }
 
   @Roles('promoter')
   @Post('promoter/payout-accounts/paypal')

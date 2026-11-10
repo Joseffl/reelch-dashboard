@@ -53,6 +53,11 @@ describe('proof decision policy', () => {
     expect(decideProof(input({ claimedViews: 1600 })).decision).toBe('auto_approve');
     expect(decideProof(input({ claimedViews: 0 })).decision).toBe('auto_approve');
   });
+  it('sends proofs whose link failed the platform check to a person', () => {
+    expect(decideProof(input({ linkCheck: 'failed' })).reasons).toContain('The post link could not be confirmed on the platform');
+    expect(decideProof(input({ linkCheck: 'unavailable' })).decision).toBe('auto_approve');
+    expect(decideProof(input({ linkCheck: 'confirmed' })).decision).toBe('auto_approve');
+  });
   it('respects the automatic approval switch', () => {
     expect(decideProof(input({ settings: { autoApprove: false, minimumScore: 85, allowEvidenceOnly: false } })).decision).toBe('needs_review');
   });

@@ -1,6 +1,7 @@
 "use client";
 
 import { PhoneField } from "./phone-field";
+import { ConnectedAccounts } from "./connected-accounts";
 
 import { useErrorToast, ErrorFallback, toast } from "@/components/toasts";
 
@@ -63,7 +64,8 @@ export function ProfilePage() {
 
     <aside className="space-y-5"><section className="rounded-2xl border border-black/[.08] bg-white p-6"><h3 className="text-base font-black">Account details</h3><dl className="mt-5 space-y-4"><Datum label="Email address" value={data.user.email} /><Datum label="Role" value={data.role === "admin" ? "Operations" : data.role} capitalize /><Datum label="Member since" value={new Date(data.user.createdAt).toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" })} /></dl></section>
       {data.role !== "admin" && <section className="rounded-2xl border border-black/[.08] bg-white p-6"><div className="flex items-center gap-2"><BadgeCheck className="size-5 text-[#6558ff]" /><h3 className="text-base font-black">Verified details</h3></div><p className="mt-2 text-xs leading-5 text-black/45">These details are tied to verification. Contact support if they need to change.</p><dl className="mt-5 space-y-4"><Datum label="Verification" value={status.replaceAll("_", " ")} capitalize /><Datum label="Country" value={String(profile.country ?? "—")} />{data.role === "business" && <><Datum label="Industry" value={String(profile.industry ?? "—")} /><Datum label="Registration number" value={String(profile.registrationNumber ?? "—")} /><Datum label="Registered address" value={String(profile.address ?? "—")} /></>}</dl></section>}
-      {data.role === "promoter" && data.socials.length > 0 && <section className="rounded-2xl border border-black/[.08] bg-white p-6"><h3 className="text-base font-black">Connected channels</h3><div className="mt-4 space-y-3">{data.socials.map((social) => <div key={social.id} className="rounded-xl bg-[#f6f5f0] p-3"><p className="text-sm font-bold capitalize">{social.platform}</p><p className="mt-1 truncate text-xs text-black/45">{social.handle}</p>{social.audienceSize != null && <p className="mt-2 text-xs font-bold">{social.audienceSize.toLocaleString()} audience</p>}</div>)}</div></section>}
+      {data.role === "promoter" && <ConnectedAccounts />}
+      {data.role === "promoter" && data.socials.length > 0 && <section className="rounded-2xl border border-black/[.08] bg-white p-6"><h3 className="text-base font-black">Your channels</h3><div className="mt-4 space-y-3">{data.socials.map((social) => <div key={social.id} className="rounded-xl bg-[#f6f5f0] p-3"><p className="text-sm font-bold capitalize">{social.platform}</p><p className="mt-1 truncate text-xs text-black/45">{social.handle}</p>{social.audienceSize != null && <p className="mt-2 text-xs font-bold">{social.audienceSize.toLocaleString()} audience</p>}</div>)}</div></section>}
     </aside>
   </div>;
 }

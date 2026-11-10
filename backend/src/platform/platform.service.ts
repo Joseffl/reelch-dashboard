@@ -6,7 +6,7 @@ import {
   administratorInvitations, administrators, auditLogs, businesses, campaignCreatives, campaignPromoters, campaignReservations, campaigns,
   campaignStatusHistory, conversions, fraudFlags, ledgerEntries, ledgerTransactions,
   disputeEvidence, disputes, inboundWebhookEvents, notifications, payoutAccounts, proofSubmissions,
-  paymentAttempts, proofAiReviews, proofMetricSnapshots, promoterApplications, promoters, referralLinks, socialAccounts, trackingEvents, users, verificationDocuments, verificationRequests,
+  paymentAttempts, proofAiReviews, proofMetricSnapshots, promoterApplications, promoters, referralLinks, socialAccounts, socialConnections, trackingEvents, users, verificationDocuments, verificationRequests,
   verificationResults, virtualAccounts, wallets, withdrawals,
 } from '../database/schema/index.js';
 import type { AuthenticatedUser } from '../auth/auth.types.js';
@@ -20,6 +20,8 @@ import { imageFingerprint, isNearDuplicate } from './evidence-fingerprint.js';
 import { decideProof, proofAssessmentSchema, proofReviewPrompt, proofReviewSystemPrompt, FIRST_PROOF_WINDOW_HOURS, firstProofDeadline, RESUBMIT_WINDOW_HOURS, resubmitDeadline, riskScore, sanitizeAssessment, type AiProofAssessment } from './proof-review.js';
 import { campaignCountry, campaignLocationAllows, campaignLocations } from './campaign-location.js';
 import { summarizeAnalytics } from './analytics.js';
+import { TiktokApiError, TiktokService, TIKTOK_SCOPES } from './tiktok.service.js';
+import { createOAuthState, open as openSealed, readOAuthState, seal } from './token-crypto.js';
 import { assistantContext, assistantPrompt, assistantSchema, assistantSystemPrompt, cleanHistory, MAX_QUESTION_LENGTH, sanitizeAnswer } from './business-assistant.js';
 
 type CreateCampaign = { title: string; description: string; unitPriceKobo: number; targetQuantity: number; targeting?: Record<string, unknown>; destinationUrl: string; conversionType?: string; startsAt?: string; endsAt?: string };
@@ -33,7 +35,7 @@ export class PlatformService {
   // Per-instance limit on assistant questions, so one account cannot run up AI costs.
   private readonly assistantCalls = new Map<string, number[]>();
 
-  constructor(@Inject(DatabaseService) private readonly database: DatabaseService, @Inject(R2StorageService) private readonly storage: R2StorageService, @Inject(PaystackService) private readonly paystack: PaystackService, @Inject(SocialVerificationService) private readonly socialVerification: SocialVerificationService, @Inject(PaypalService) private readonly paypal: PaypalService, @Inject(AiService) private readonly ai: AiService, @Inject(JobsService) private readonly jobs: JobsService) {}
+  constructor(@Inject(DatabaseService) private readonly database: DatabaseService, @Inject(R2StorageService) private readonly storage: R2StorageService, @Inject(PaystackService) private readonly paystack: PaystackService, @Inject(SocialVerificationService) private readonly socialVerification: SocialVerificationService, @Inject(PaypalService) private readonly paypal: PaypalService, @Inject(AiService) private readonly ai: AiService, @Inject(JobsService) private readonly jobs: JobsService, @Inject(TiktokService) private readonly tiktok: TiktokService) {}
 
   // PayPal cannot settle NGN, so the campaign currency decides the payment rail.
   platformCurrency() {
@@ -920,6 +922,77 @@ export class PlatformService {
     return { ...balance, paymentProvider: this.providerFor(currency), minimumWithdrawalKobo: this.minimumWithdrawal(currency), payoutAccount: account ? { id: account.id, provider: account.provider, email: account.providerRecipientCode } : null, withdrawals: history };
   }
 
+  // ---- Connected social accounts (TikTok) ----
+
+  async promoterSocialConnections(user: AuthenticatedUser) {
+    const promoter = await this.promoterFor(user.id);
+    const rows = await this.database.db.select().from(socialConnections).where(and(eq(socialConnections.promoterId, promoter.id), eq(socialConnections.status, 'active')));
+    return {
+      tiktok: { available: this.tiktok.configured },
+      connections: rows.map(row => ({ provider: row.provider, username: row.username, scopes: row.scopes, connectedAt: row.createdAt, lastSyncedAt: row.lastSyncedAt })),
+    };
+  }
+
+  async tiktokConnectUrl(user: AuthenticatedUser) {
+    await this.promoterFor(user.id);
+    if (!this.tiktok.configured) throw new ServiceUnavailableException('Connecting TikTok is not available right now');
+    return { url: this.tiktok.authorizeUrl(createOAuthState(user.id, 'tiktok')) };
+  }
+
+  // TikTok sends the browser back here. Every outcome redirects to the promoter's profile with a status.
+  async completeTiktokConnection(query: { code?: string; state?: string; error?: string; error_description?: string }) {
+    const back = (status: string) => `${(process.env.FRONTEND_URL ?? 'http://localhost:3000').replace(/\/$/, '')}/promoter/profile?tiktok=${status}`;
+    if (query.error) return back(query.error === 'access_denied' ? 'cancelled' : 'error');
+    const state = query.state ? readOAuthState(query.state, 'tiktok') : null;
+    if (!state || !query.code) return back('expired');
+    try {
+      const promoter = await this.promoterFor(state.userId);
+      const tokens = await this.tiktok.exchangeCode(query.code);
+      if (!TIKTOK_SCOPES.every(scope => tokens.scopes.includes(scope))) return back('missing-permission');
+      const profile = await this.tiktok.userInfo(tokens.accessToken).catch(() => ({ openId: tokens.openId, displayName: 'TikTok account' }));
+      const openId = profile.openId || tokens.openId;
+      const owner = await this.database.db.query.socialConnections.findFirst({ where: and(eq(socialConnections.provider, 'tiktok'), eq(socialConnections.providerUserId, openId)) });
+      if (owner && owner.promoterId !== promoter.id && owner.status === 'active') return back('in-use');
+      const values = { providerUserId: openId, username: profile.displayName, accessTokenEncrypted: seal(tokens.accessToken), refreshTokenEncrypted: tokens.refreshToken ? seal(tokens.refreshToken) : null, tokenExpiresAt: tokens.expiresAt, scopes: tokens.scopes, status: 'active', updatedAt: new Date() };
+      if (owner && owner.promoterId !== promoter.id) await this.database.db.delete(socialConnections).where(eq(socialConnections.id, owner.id));
+      await this.database.db.insert(socialConnections).values({ promoterId: promoter.id, provider: 'tiktok', ...values })
+        .onConflictDoUpdate({ target: [socialConnections.promoterId, socialConnections.provider], set: values });
+      await this.systemAudit(null, 'social.tiktok_connected', 'promoter', promoter.id, { openId });
+      return back('connected');
+    } catch (error) {
+      this.logger.warn(`TikTok connection failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+      return back('error');
+    }
+  }
+
+  async disconnectTiktok(user: AuthenticatedUser) {
+    const promoter = await this.promoterFor(user.id);
+    const connection = await this.database.db.query.socialConnections.findFirst({ where: and(eq(socialConnections.promoterId, promoter.id), eq(socialConnections.provider, 'tiktok')) });
+    if (!connection) return { disconnected: true };
+    if (connection.accessTokenEncrypted) await this.tiktok.revoke(openSealed(connection.accessTokenEncrypted)).catch(() => undefined);
+    await this.database.db.delete(socialConnections).where(eq(socialConnections.id, connection.id));
+    await this.audit(user, 'social.tiktok_disconnected', 'promoter', promoter.id);
+    return { disconnected: true };
+  }
+
+  // A usable TikTok access token for this promoter, refreshed when it is about to expire.
+  private async tiktokAccessToken(promoterId: string) {
+    if (!this.tiktok.configured) return undefined;
+    const connection = await this.database.db.query.socialConnections.findFirst({ where: and(eq(socialConnections.promoterId, promoterId), eq(socialConnections.provider, 'tiktok'), eq(socialConnections.status, 'active')) });
+    if (!connection?.accessTokenEncrypted) return undefined;
+    try {
+      if (connection.tokenExpiresAt && connection.tokenExpiresAt.getTime() > Date.now() + 5 * 60_000) return openSealed(connection.accessTokenEncrypted);
+      if (!connection.refreshTokenEncrypted) return undefined;
+      const tokens = await this.tiktok.refresh(openSealed(connection.refreshTokenEncrypted));
+      await this.database.db.update(socialConnections).set({ accessTokenEncrypted: seal(tokens.accessToken), refreshTokenEncrypted: tokens.refreshToken ? seal(tokens.refreshToken) : connection.refreshTokenEncrypted, tokenExpiresAt: tokens.expiresAt, updatedAt: new Date() }).where(eq(socialConnections.id, connection.id));
+      return tokens.accessToken;
+    } catch (error) {
+      this.logger.warn(`TikTok token unavailable for promoter ${promoterId}: ${error instanceof Error ? error.message : 'unknown error'}`);
+      if (error instanceof TiktokApiError) await this.database.db.update(socialConnections).set({ status: 'expired', updatedAt: new Date() }).where(eq(socialConnections.id, connection.id));
+      return undefined;
+    }
+  }
+
   async setPaypalPayoutAccount(user: AuthenticatedUser, input: { email: string }) {
     const promoter = await this.promoterFor(user.id);
     const email = input.email?.trim().toLowerCase();
@@ -1108,11 +1181,17 @@ export class PlatformService {
     if (input.claimedViews !== undefined && (!Number.isInteger(input.claimedViews) || input.claimedViews < 0)) throw new BadRequestException('Claimed views must be a positive whole number');
     if (platform === 'whatsapp' && !input.storageKey) throw new BadRequestException('Upload evidence for a WhatsApp submission');
     if (input.storageKey) await this.storage.assertProofUpload(user.id, assignmentId, input.storageKey, String(input.contentType), Number(input.sizeBytes));
-    const verification = await this.socialVerification.verify(platform, input.submittedUrl, { hasEvidence: Boolean(input.storageKey) });
+    const tiktokAccessToken = platform === 'tiktok' ? await this.tiktokAccessToken(promoter.id) : undefined;
+    const verification = await this.socialVerification.verify(platform, input.submittedUrl, { hasEvidence: Boolean(input.storageKey), tiktokAccessToken });
+    // Views have to come from somewhere: the platform itself, or a screenshot the AI can read.
+    if (!input.storageKey && verification.metrics?.views === undefined) {
+      throw new BadRequestException(platform === 'tiktok' ? 'Upload a screenshot that shows the views, or connect your TikTok account so Reelch can read them' : 'Upload a screenshot that shows the post and its views');
+    }
     const connectedProfile = await this.database.db.query.socialAccounts.findFirst({ where: and(eq(socialAccounts.promoterId, promoter.id), eq(socialAccounts.platform, platform)) });
     const expectedHandle = connectedProfile?.handle.replace(/^@/, '').replace(/^https?:\/\/[^/]+\/@?/, '').split(/[/?#]/)[0].toLowerCase();
     const returnedHandle = String(verification.checks.username ?? verification.checks.authorHandle ?? verification.externalAuthorId ?? '').replace(/^@/, '').toLowerCase();
-    const ownershipMatches = verification.method === 'manual' || !expectedHandle ? undefined : Boolean(returnedHandle && expectedHandle === returnedHandle);
+    // A video read through the promoter's own connected account is theirs by definition.
+    const ownershipMatches = verification.checks.ownedByConnectedAccount === true ? true : verification.method === 'manual' || !expectedHandle ? undefined : Boolean(returnedHandle && expectedHandle === returnedHandle);
     const requiredHashtag = typeof targeting.requiredHashtag === 'string' ? targeting.requiredHashtag.trim().toLowerCase() : '';
     const providerText = String(verification.checks.text ?? verification.checks.description ?? '').toLowerCase();
     const hashtagMatches = !requiredHashtag || !providerText || providerText.includes(requiredHashtag);
@@ -1155,6 +1234,7 @@ export class PlatformService {
       }
     }
 
+    const reportedViews = (await this.database.db.query.proofMetricSnapshots.findFirst({ where: eq(proofMetricSnapshots.proofSubmissionId, proof.id), orderBy: desc(proofMetricSnapshots.capturedAt) }))?.views ?? undefined;
     let assessment: AiProofAssessment | null = null;
     let failure: string | undefined;
     let meta = { provider: 'none', model: 'none', latencyMs: 0 };
@@ -1169,7 +1249,7 @@ export class PlatformService {
             destinationUrl: typeof targeting.destinationUrl === 'string' ? targeting.destinationUrl : undefined,
             expectedHandle: typeof checks.expectedHandle === 'string' ? checks.expectedHandle : undefined,
             claimedViews: proof.claimedViews ?? undefined, submittedUrl: proof.submittedUrl ?? undefined,
-            platformData: { method: proof.verificationMethod, author: checks.username ?? checks.authorHandle, caption: checks.text ?? checks.description },
+            platformData: { method: proof.verificationMethod, author: checks.username ?? checks.authorHandle, caption: checks.text ?? checks.description, views: reportedViews, linkCheck: checks.linkCheck },
           }, Boolean(evidence)) },
           ...(evidence ? [{ type: 'file' as const, mimeType: evidence.contentType, data: evidence.data }] : []),
         ],
@@ -1183,12 +1263,13 @@ export class PlatformService {
     }
 
     const nearDuplicateEvidence = Boolean(!duplicateEvidence && fingerprint && assessment && await this.hasNearDuplicate(proof.id, assignment.campaignId, fingerprint, assessment));
-    const platformViews = (await this.database.db.query.proofMetricSnapshots.findFirst({ where: eq(proofMetricSnapshots.proofSubmissionId, proof.id), orderBy: desc(proofMetricSnapshots.capturedAt) }))?.views ?? undefined;
+    const platformViews = reportedViews;
     const outcome = decideProof({
       assessment, verificationMethod: proof.verificationMethod,
       ownershipMatches: typeof checks.ownershipMatches === 'boolean' ? checks.ownershipMatches : undefined,
       hashtagMatches: typeof checks.hashtagMatches === 'boolean' ? checks.hashtagMatches : undefined,
       minimumViews: Number(targeting.minimumViews ?? 0), platformViews: platformViews ?? undefined, claimedViews: proof.claimedViews ?? undefined, duplicateEvidence, nearDuplicateEvidence,
+      linkCheck: checks.linkCheck === 'confirmed' || checks.linkCheck === 'failed' || checks.linkCheck === 'unavailable' ? checks.linkCheck : undefined,
       settings: {
         autoApprove: process.env.AI_AUTO_APPROVE !== 'false',
         minimumScore: Number(process.env.AI_AUTO_APPROVE_MIN_SCORE ?? 85),
