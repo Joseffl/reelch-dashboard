@@ -43,6 +43,14 @@ export class PlatformController {
   businessCampaigns(@Req() req: AuthenticatedRequest) { return this.platform.businessCampaigns(req.user); }
 
   @Roles('business')
+  @Get('business/analytics')
+  businessAnalytics(@Req() req: AuthenticatedRequest) { return this.platform.businessAnalytics(req.user); }
+
+  @Roles('business')
+  @Post('business/assistant')
+  askBusinessAssistant(@Req() req: AuthenticatedRequest, @Body() body: { question?: unknown; history?: unknown }) { return this.platform.askBusinessAssistant(req.user, body); }
+
+  @Roles('business')
   @Get('business/campaigns/:id')
   businessCampaign(@Req() req: AuthenticatedRequest, @Param('id') id: string) { return this.platform.businessCampaignDetail(req.user, id); }
 

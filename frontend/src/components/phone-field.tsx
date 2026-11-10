@@ -7,14 +7,17 @@ const countryNames = new Intl.DisplayNames(["en"], { type: "region" });
 const countries = getCountries().sort((a, b) => (countryNames.of(a) ?? a).localeCompare(countryNames.of(b) ?? b));
 const flag = (country: string) => country.replace(/./g, letter => String.fromCodePoint(127397 + letter.charCodeAt(0)));
 const subscribeToNothing = () => () => undefined;
+const examples: Partial<Record<CountryCode, string>> = { US: "(201) 555-0123", CA: "(204) 555-0123", GB: "07400 123456", IE: "085 012 3456", NG: "0801 234 5678", AU: "0412 345 678", DE: "01512 3456789" };
 
-export function PhoneField({ label, name, defaultValue = "", required = false }: { label: string; name: string; defaultValue?: string; required?: boolean }) {
+export function PhoneField({ label, name, defaultValue = "", required = false, defaultCountry = "US" }: { label: string; name: string; defaultValue?: string; required?: boolean; defaultCountry?: CountryCode }) {
   const id = useId();
   // Country names and their order vary between Node, browsers and locales, so the server renders only
   // the selected country and the full list appears once the page has loaded in the browser.
   const hydrated = useSyncExternalStore(subscribeToNothing, () => true, () => false);
-  const initial = parsePhoneNumberFromString(defaultValue, "NG");
-  const [country, setCountry] = useState<CountryCode>(initial?.country ?? "NG");
+  const initial = parsePhoneNumberFromString(defaultValue, defaultCountry);
+  // Until the user picks a dialling code (or a saved number has one), follow the country chosen elsewhere in the form.
+  const [picked, setCountry] = useState<CountryCode | null>(initial?.country ?? null);
+  const country = picked ?? defaultCountry;
   const [value, setValue] = useState(initial?.nationalNumber ?? defaultValue);
   const callingCode = getCountryCallingCode(country);
   const parsed = parsePhoneNumberFromString(value, country);
@@ -29,7 +32,7 @@ export function PhoneField({ label, name, defaultValue = "", required = false }:
           : <option value={country}>{flag(country)} +{callingCode}</option>}
       </select>
       <input id={id} type="tel" inputMode="tel" autoComplete="tel-national" value={value} required={required}
-        placeholder={country === "NG" ? "0801 234 5678" : "Phone number"}
+        placeholder={examples[country] ?? "Phone number"}
         onChange={event => {
           const next = event.target.value;
           if (next.trim().startsWith("+")) {

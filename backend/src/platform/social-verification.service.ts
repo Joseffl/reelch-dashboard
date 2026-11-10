@@ -9,13 +9,21 @@ export type SocialVerification = {
 
 @Injectable()
 export class SocialVerificationService {
-  async verify(platform: string, submittedUrl?: string): Promise<SocialVerification> {
+  async verify(platform: string, submittedUrl?: string, options: { hasEvidence?: boolean } = {}): Promise<SocialVerification> {
     const normalized = platform.trim().toLowerCase();
     if (normalized === 'whatsapp') return { method: 'manual', checks: { reason: 'WhatsApp statuses and broadcasts have no public verification API' } };
     if (!submittedUrl) throw new BadRequestException('A public post link is required for this platform');
     let url: URL; try { url = new URL(submittedUrl); } catch { throw new BadRequestException('Enter a valid public post link'); }
     if (normalized === 'x') return this.verifyX(url);
-    if (normalized === 'tiktok') return this.verifyTikTok(url);
+    if (normalized === 'tiktok') {
+      try { return await this.verifyTikTok(url); }
+      catch (error) {
+        // TikTok's public lookup fails for private, new or region-locked posts. With a screenshot attached,
+        // the proof can still be checked from its evidence instead of being turned away.
+        if (!options.hasEvidence || !['tiktok.com', 'www.tiktok.com', 'vm.tiktok.com'].includes(url.hostname)) throw error;
+        return { method: 'manual', externalPostId: url.pathname.match(/\/video\/(\d+)/)?.[1], checks: { validUrl: true, reason: 'TikTok could not confirm this post automatically, so it was checked from the evidence' } };
+      }
+    }
     if (normalized === 'instagram') return this.verifyInstagram(url);
     throw new BadRequestException('Unsupported proof platform');
   }

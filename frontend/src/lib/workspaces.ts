@@ -3,6 +3,7 @@ import type { NavItem } from "@/components/dashboard-shell";
 export const businessNavigation: NavItem[] = [
   { label: "Overview", href: "/business", icon: "overview" },
   { label: "Campaigns", href: "/business/campaigns", icon: "campaigns" },
+  { label: "Analytics", href: "/business/analytics", icon: "analytics" },
   { label: "Promoters", href: "/business/promoters", icon: "promoters" },
   { label: "Wallet", href: "/business/wallet", icon: "wallet" },
   { label: "Notifications", href: "/business/notifications", icon: "notifications" },
