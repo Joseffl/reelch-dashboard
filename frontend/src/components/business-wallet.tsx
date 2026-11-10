@@ -19,6 +19,7 @@ import {
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { DashboardSkeleton } from "@/components/loading-skeleton";
+import { formatMoney } from "@/lib/money";
 
 const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000/api/v1";
 
@@ -33,6 +34,8 @@ type Campaign = {
 type Wallet = {
   balanceKobo: number;
   currency: string;
+  paymentProvider: "paypal" | "paystack";
+  campaignCurrency: string;
   account: null | {
     accountName: string;
     accountNumber: string;
@@ -45,6 +48,7 @@ type Wallet = {
     id: string;
     direction: "credit" | "debit";
     amountKobo: number;
+    currency?: string;
     createdAt: string;
     type: string;
     reference: string;
@@ -54,8 +58,8 @@ type Wallet = {
   }>;
 };
 
-function money(value: number) {
-  return `₦${(value / 100).toLocaleString(undefined, { minimumFractionDigits: 2 })}`;
+function money(value: number, currency = "NGN") {
+  return formatMoney(value, currency, { decimals: true });
 }
 
 async function responseJson(response: Response) {
@@ -94,10 +98,16 @@ export function BusinessWallet() {
     void load();
   }, [load]);
 
-  // A Paystack redirect is an external event; verify it once when the callback lands.
+  // A Paystack or PayPal redirect is an external event; verify it once when the callback lands.
   useEffect(() => {
-    const reference = params.get("reference") || params.get("trxref");
+    // PayPal returns the order id as `token`; Paystack uses `reference`/`trxref`.
+    const reference = params.get("reference") || params.get("trxref") || params.get("token");
     const campaignId = params.get("campaignId");
+    if (params.get("cancelled")) {
+      setError("PayPal checkout was cancelled. Your campaign has not been charged.");
+      history.replaceState({}, "", "/business/wallet");
+      return;
+    }
     if (!reference || !campaignId) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setBusy(campaignId);
@@ -179,6 +189,8 @@ export function BusinessWallet() {
 
   const payable = items.filter((item) => item.status === "funding_required");
   const funded = items.filter((item) => ["live", "paused", "completed"].includes(item.status));
+  const paypalMode = wallet.paymentProvider === "paypal";
+  const escrowed = funded.filter((item) => item.currency === wallet.campaignCurrency).reduce((sum, item) => sum + item.budgetKobo, 0);
 
   return (
     <div className="mx-auto max-w-6xl space-y-5 sm:space-y-6">
@@ -189,10 +201,10 @@ export function BusinessWallet() {
         <div className="p-5 sm:p-7 lg:flex lg:items-center lg:justify-between lg:gap-10">
           <div>
             <div className="flex items-center gap-2 text-[0.67rem] font-bold uppercase tracking-[.16em] text-white/45">
-              <WalletCards className="size-4 text-[#9cff57]" /> Available balance
+              <WalletCards className="size-4 text-[#9cff57]" /> {paypalMode ? "Funded via PayPal" : "Available balance"}
             </div>
             <p className="mt-3 text-[2rem] font-black leading-none tracking-[-.045em] sm:text-[2.65rem]">
-              {money(wallet.balanceKobo)}
+              {paypalMode ? money(escrowed, wallet.campaignCurrency) : money(wallet.balanceKobo, wallet.currency)}
             </p>
           </div>
           <div className="mt-5 flex items-start gap-2 border-t border-white/10 pt-4 text-xs leading-5 text-white/45 lg:mt-0 lg:max-w-xs lg:border-l lg:border-t-0 lg:py-2 lg:pl-6">
@@ -217,7 +229,9 @@ export function BusinessWallet() {
 
             <div className="mt-5 divide-y divide-black/[.07]">
               {payable.map((campaign) => {
-                const hasBalance = wallet.balanceKobo >= campaign.budgetKobo;
+                const sameCurrency = campaign.currency === wallet.currency;
+                const hasBalance = sameCurrency && wallet.balanceKobo >= campaign.budgetKobo;
+                const viaPaypal = campaign.currency !== "NGN";
                 return (
                   <article key={campaign.id} className="py-5 first:pt-0 last:pb-0">
                     <div className="flex items-start justify-between gap-4">
@@ -225,27 +239,28 @@ export function BusinessWallet() {
                         <h3 className="truncate font-black">{campaign.title}</h3>
                         <p className="mt-1 text-xs text-black/42">Approved campaign</p>
                       </div>
-                      <p className="shrink-0 text-lg font-black tracking-[-.025em]">{money(campaign.budgetKobo)}</p>
+                      <p className="shrink-0 text-lg font-black tracking-[-.025em]">{money(campaign.budgetKobo, campaign.currency)}</p>
                     </div>
                     <div className="mt-4 grid gap-2 sm:grid-cols-2">
                       <button
                         onClick={() => pay(campaign)}
                         disabled={Boolean(busy)}
-                        className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-[#171811] px-4 text-sm font-bold text-white transition hover:bg-[#6558ff] disabled:opacity-50"
+                        className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-xl px-4 text-sm font-bold transition disabled:opacity-50 ${sameCurrency ? "" : "sm:col-span-2"} ${viaPaypal ? "bg-[#ffc439] text-[#111] hover:bg-[#f2ba36]" : "bg-[#171811] text-white hover:bg-[#6558ff]"}`}
                       >
                         {busy === campaign.id ? <LoaderCircle className="size-4 animate-spin" /> : <CreditCard className="size-4" />}
-                        Pay with Paystack
+                        {viaPaypal ? "Pay with PayPal" : "Pay with Paystack"}
                       </button>
-                      <button
+                      {sameCurrency && <button
                         onClick={() => fundWithBalance(campaign)}
                         disabled={Boolean(busy) || !hasBalance}
                         className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-black/10 px-4 text-sm font-bold transition hover:bg-black/[.03] disabled:cursor-not-allowed disabled:opacity-35"
                       >
                         {busy === `wallet-${campaign.id}` && <LoaderCircle className="size-4 animate-spin" />}
                         Use wallet balance
-                      </button>
+                      </button>}
                     </div>
-                    {!hasBalance && <p className="mt-2 text-xs text-black/38">Your wallet balance is below this campaign budget.</p>}
+                    {sameCurrency && !hasBalance && <p className="mt-2 text-xs text-black/38">Your wallet balance is below this campaign budget.</p>}
+                    {viaPaypal && <p className="mt-2 text-xs text-black/38">You will approve the payment on PayPal and return here. Funds are held in escrow until promoters deliver verified results.</p>}
                   </article>
                 );
               })}
@@ -277,7 +292,7 @@ export function BusinessWallet() {
                       </p>
                     </div>
                     <p className={`ml-auto shrink-0 text-sm font-black ${incoming ? "text-green-700" : "text-black"}`}>
-                      {incoming ? "+" : "−"}{money(entry.amountKobo)}
+                      {incoming ? "+" : "−"}{money(entry.amountKobo, entry.currency ?? wallet.currency)}
                     </p>
                   </div>
                 );
@@ -288,7 +303,7 @@ export function BusinessWallet() {
         </div>
 
         <aside className="space-y-5 lg:sticky lg:top-8">
-          <section className="rounded-[1.6rem] border border-black/[.08] bg-white p-5 shadow-[0_10px_35px_rgba(21,23,15,.035)] sm:p-6">
+          {wallet.paymentProvider === "paystack" && <section className="rounded-[1.6rem] border border-black/[.08] bg-white p-5 shadow-[0_10px_35px_rgba(21,23,15,.035)] sm:p-6">
             <div className="flex items-center gap-2 text-xs font-black uppercase tracking-[.14em] text-[#6558ff]">
               <Building2 className="size-4" /> Bank transfer
             </div>
@@ -324,7 +339,17 @@ export function BusinessWallet() {
                 </button>
               </>
             )}
-          </section>
+          </section>}
+          {wallet.paymentProvider === "paypal" && <section className="rounded-[1.6rem] border border-black/[.08] bg-white p-5 shadow-[0_10px_35px_rgba(21,23,15,.035)] sm:p-6">
+            <div className="flex items-center gap-2 text-xs font-black uppercase tracking-[.14em] text-[#6558ff]">
+              <ShieldCheck className="size-4" /> How funding works
+            </div>
+            <ol className="mt-4 space-y-3 text-sm leading-6 text-black/55">
+              <li><b className="text-black">1. Pay with PayPal.</b> The campaign budget is captured and held in escrow.</li>
+              <li><b className="text-black">2. AI verifies every proof.</b> Reelch checks each post against your brief and flags fraud.</li>
+              <li><b className="text-black">3. Promoters get paid.</b> Verified work is paid to the promoter&apos;s PayPal automatically.</li>
+            </ol>
+          </section>}
 
           {!!funded.length && (
             <details className="group rounded-[1.6rem] border border-black/[.08] bg-white shadow-[0_10px_35px_rgba(21,23,15,.035)]">
@@ -339,7 +364,7 @@ export function BusinessWallet() {
                       <p className="truncate text-sm font-bold">{campaign.title}</p>
                       <p className="mt-1 text-xs capitalize text-black/38">{campaign.status}</p>
                     </div>
-                    <p className="shrink-0 text-sm font-black">{money(campaign.budgetKobo)}</p>
+                    <p className="shrink-0 text-sm font-black">{money(campaign.budgetKobo, campaign.currency)}</p>
                   </div>
                 ))}
               </div>

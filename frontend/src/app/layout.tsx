@@ -5,7 +5,7 @@ import { Toaster } from "@/components/toasts";
 export const metadata: Metadata = {
   title: "Reelch | Performance advertising that rewards results",
   description:
-    "Reelch connects businesses with promoters and rewards verified advertising outcomes.",
+    "Reelch connects businesses with promoters. Campaigns are funded with PayPal, AI verifies each post, and verified work is paid out to PayPal.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

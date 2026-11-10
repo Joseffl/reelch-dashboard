@@ -32,5 +32,5 @@ export function AnimatedNumber({ value, prefix = "", suffix = "", duration = 150
     return () => { observer.disconnect(); cancelAnimationFrame(frame); };
   }, [duration, value]);
 
-  return <span ref={ref}>{prefix}{display.toLocaleString()}{suffix}</span>;
+  return <span ref={ref}>{prefix}{display.toLocaleString("en-US")}{suffix}</span>;
 }

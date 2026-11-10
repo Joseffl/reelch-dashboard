@@ -85,6 +85,20 @@
       "when": 1793272296167,
       "tag": "0011_worthless_the_captain",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1794111534484,
+      "tag": "0012_violet_jackpot",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1794231224001,
+      "tag": "0013_evidence_fingerprint_and_refunds",
+      "breakpoints": true
     }
   ]
 }
