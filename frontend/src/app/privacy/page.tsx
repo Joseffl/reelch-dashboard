@@ -14,7 +14,7 @@ const principles = [
 ];
 
 const sections = [
-  ["01", "Information we collect", "We collect information you provide directly, including your name, email address, phone number, country, social profile, audience information and campaign or account details. We also collect basic technical information such as device type, browser, IP address and how you use Reelch."],
+  ["01", "Information we collect", "We collect information you provide directly, including your name, email address, phone number, country, social profile, audience information and campaign or account details. If you choose to connect a social account such as TikTok, we receive basic profile information and your public videos and view counts, which we use only to verify the posts you submit. We also collect basic technical information such as device type, browser, IP address and how you use Reelch."],
   ["02", "How we use your information", "We use your information to provide and improve Reelch, match businesses and promoters, administer campaigns, verify results, process support requests, prevent fraud and send relevant service or onboarding updates."],
   ["03", "Cookies and analytics", "Essential cookies keep the site secure and remember choices such as your cookie preference. With your permission, optional analytics may help us understand which pages are useful and improve the experience. You can choose essential cookies only from our cookie notice."],
   ["04", "When we share information", "We may share information with service providers that help us operate the platform, with campaign participants where necessary to deliver an agreed service, or where required by law. We do not sell your personal information."],

@@ -1,6 +1,8 @@
 "use client";
 
+import { countryCode, PROFILE_COUNTRIES } from "@/lib/locations";
 import { PhoneField } from "./phone-field";
+import type { CountryCode } from "libphonenumber-js/min";
 
 import { useErrorToast, toast } from "@/components/toasts";
 
@@ -15,11 +17,10 @@ type Role = "business" | "promoter";
 type DocumentRecord = { id: string; kind: string; originalFilename: string; sizeBytes: number };
 type Status = { role: Role; profile: Record<string, unknown>; socials?: Array<{ platform: string; handle: string }>; verification: { status: string }; documents: DocumentRecord[] };
 const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000/api/v1";
-const countries = ["Nigeria", "Ghana", "Kenya", "South Africa", "United Kingdom", "United States", "Other"];
+const countries = PROFILE_COUNTRIES;
 const industries = ["Beauty & skincare", "Education", "Entertainment", "Fashion", "Finance & fintech", "Food & beverage", "Gaming", "Health & wellness", "Hospitality & travel", "Real estate", "Retail & ecommerce", "Sports & fitness", "Technology", "Other"];
 const goals = ["Drive sign-ups", "Generate leads", "Increase visibility", "Promote an event", "Drive purchases", "Grow an audience"];
 const niches = ["Beauty", "Business", "Education", "Entertainment", "Fashion", "Finance", "Fitness", "Food", "Gaming", "Lifestyle", "Music", "Sports", "Technology", "Travel"];
-const nigeriaLocations = ["Abia", "Adamawa", "Akwa Ibom", "Anambra", "Bauchi", "Bayelsa", "Benue", "Borno", "Cross River", "Delta", "Ebonyi", "Edo", "Ekiti", "Enugu", "Federal Capital Territory", "Gombe", "Imo", "Jigawa", "Kaduna", "Kano", "Katsina", "Kebbi", "Kogi", "Kwara", "Lagos", "Nasarawa", "Niger", "Ogun", "Ondo", "Osun", "Oyo", "Plateau", "Rivers", "Sokoto", "Taraba", "Yobe", "Zamfara"];
 const platforms = ["Instagram", "TikTok", "X", "YouTube", "WhatsApp", "Phone number", "Facebook", "LinkedIn", "Other"];
 
 function completedOnboardingStep(status: Status) {
@@ -49,6 +50,14 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
 
 function Field({ label, name, defaultValue, required, type = "text", placeholder }: { label: string; name: string; defaultValue?: string; required?: boolean; type?: string; placeholder?: string }) {
   return <label className="block text-sm font-bold">{label}<input name={name} type={type} required={required} defaultValue={defaultValue} placeholder={placeholder} className="mt-2 min-h-12 w-full rounded-xl border border-black/12 bg-white px-4 text-sm outline-none focus:border-[#6558ff] focus:ring-4 focus:ring-[#6558ff]/10" /></label>;
+}
+
+// Country comes first so the phone number defaults to that country's dialling code.
+function CountryAndPhone({ country, phone }: { country: string; phone: string }) {
+  // "NG" is the database default for profiles that never chose a country, so treat it as unset.
+  const [selected, setSelected] = useState(country === "NG" ? "" : country);
+  return <><label className="block text-sm font-bold">Country<select name="country" required value={selected} onChange={(event) => setSelected(event.target.value)} className="mt-2 min-h-12 w-full rounded-xl border border-black/12 bg-white px-4 text-sm outline-none focus:border-[#6558ff] focus:ring-4 focus:ring-[#6558ff]/10"><option value="" disabled>Select your country</option>{countries.map((option) => <option key={option} value={option}>{option}</option>)}</select></label>
+    <PhoneField label="Phone number" name="phone" defaultValue={phone} defaultCountry={(countryCode(selected) ?? "US") as CountryCode} required /></>;
 }
 
 function SelectField({ label, name, options, defaultValue, required }: { label: string; name: string; options: string[]; defaultValue?: string; required?: boolean }) {
@@ -148,9 +157,9 @@ export function OnboardingFlow({ role }: { role: Role }) {
 
         {step === 0 && <StepCard><div className="flex items-center gap-3"><span className={`grid size-11 place-items-center rounded-xl ${role === "business" ? "bg-[#9cff57]" : "bg-violet-300"}`}>{role === "business" ? <Building2 className="size-5" /> : <UserRound className="size-5" />}</span><div><h2 className="text-xl font-black">{steps[0]}</h2><p className="text-sm text-black/45">Tell us who you are.</p></div></div>
           <form onSubmit={saveProfile} className="mt-7 grid gap-5 sm:grid-cols-2">{role === "business" ? <>
-            <Field label="Business name" name="name" defaultValue={String(profile.name ?? "")} required /><SelectField label="Industry" name="industry" options={industries} defaultValue={String(profile.industry ?? "")} required /><Field label="Website" name="website" type="url" defaultValue={String(profile.website ?? "")} placeholder="https://" /><PhoneField label="Phone number" name="phone" defaultValue={String(profile.phone ?? "")} required /><SelectField label="Country" name="country" options={countries} defaultValue={String(profile.country ?? "") === "NG" ? "Nigeria" : String(profile.country ?? "")} required /><SelectField label="Company size" name="companySize" options={["1–10", "11–50", "51–200", "201–500", "500+"]} defaultValue={String(profile.companySize ?? "")} /><div className="sm:col-span-2"><Field label="Business address" name="address" defaultValue={String(profile.address ?? "")} required /></div><label className="block text-sm font-bold sm:col-span-2">About the business<textarea name="description" defaultValue={String(profile.description ?? "")} className="mt-2 min-h-28 w-full rounded-xl border border-black/12 bg-white p-4 text-sm outline-none focus:border-[#6558ff] focus:ring-4 focus:ring-[#6558ff]/10" /></label>
+            <Field label="Business name" name="name" defaultValue={String(profile.name ?? "")} required /><SelectField label="Industry" name="industry" options={industries} defaultValue={String(profile.industry ?? "")} required /><Field label="Website" name="website" type="url" defaultValue={String(profile.website ?? "")} placeholder="https://" /><CountryAndPhone country={String(profile.country ?? "")} phone={String(profile.phone ?? "")} /><SelectField label="Company size" name="companySize" options={["1–10", "11–50", "51–200", "201–500", "500+"]} defaultValue={String(profile.companySize ?? "")} /><div className="sm:col-span-2"><Field label="Business address" name="address" defaultValue={String(profile.address ?? "")} required /></div><label className="block text-sm font-bold sm:col-span-2">About the business<textarea name="description" defaultValue={String(profile.description ?? "")} className="mt-2 min-h-28 w-full rounded-xl border border-black/12 bg-white p-4 text-sm outline-none focus:border-[#6558ff] focus:ring-4 focus:ring-[#6558ff]/10" /></label>
           </> : <>
-            <Field label="Username" name="username" defaultValue={String(profile.username ?? "")} required /><PhoneField label="Phone number" name="phone" defaultValue={String(profile.phone ?? "")} required /><SelectField label="Country" name="country" options={countries} defaultValue={String(profile.country ?? "") === "NG" ? "Nigeria" : String(profile.country ?? "")} required /><SelectField label="Primary location" name="city" options={nigeriaLocations} defaultValue={String(profile.city ?? "")} required /><div className="sm:col-span-2"><p className="mb-2 text-sm font-bold">Content niches <span className="font-normal text-black/40">(choose all that apply)</span></p><MultiOptions name="niches" options={niches} selected={Array.isArray(profile.niches) ? profile.niches as string[] : []} /></div><label className="block text-sm font-bold sm:col-span-2">Bio<textarea name="bio" required defaultValue={String(profile.bio ?? "")} className="mt-2 min-h-28 w-full rounded-xl border border-black/12 bg-white p-4 text-sm outline-none focus:border-[#6558ff] focus:ring-4 focus:ring-[#6558ff]/10" /></label>
+            <Field label="Username" name="username" defaultValue={String(profile.username ?? "")} required /><CountryAndPhone country={String(profile.country ?? "")} phone={String(profile.phone ?? "")} /><Field label="City" name="city" defaultValue={String(profile.city ?? "")} placeholder="e.g. Austin" required /><div className="sm:col-span-2"><p className="mb-2 text-sm font-bold">Content niches <span className="font-normal text-black/40">(choose all that apply)</span></p><MultiOptions name="niches" options={niches} selected={Array.isArray(profile.niches) ? profile.niches as string[] : []} /></div><label className="block text-sm font-bold sm:col-span-2">Bio<textarea name="bio" required defaultValue={String(profile.bio ?? "")} className="mt-2 min-h-28 w-full rounded-xl border border-black/12 bg-white p-4 text-sm outline-none focus:border-[#6558ff] focus:ring-4 focus:ring-[#6558ff]/10" /></label>
           </>}<button disabled={busy} className="flex min-h-12 items-center justify-center gap-2 rounded-xl bg-[#171811] px-5 text-sm font-bold text-white sm:col-span-2 disabled:opacity-60">{busy ? <><LoaderCircle className="size-4 animate-spin" /> Saving profile…</> : <>Save and continue <ArrowRight className="size-4" /></>}</button></form>
         </StepCard>}
 

@@ -178,7 +178,7 @@ export default function RegisterPage() {
             </Link>
           </p>
           <p className="mt-6 text-center text-xs leading-5 text-black/40">
-            By creating an account, you agree to Reelch&apos;s marketplace rules and privacy terms.
+            By creating an account, you agree to Reelch&apos;s <Link href="/terms" className="underline underline-offset-2 hover:text-black/70">terms of service</Link> and <Link href="/privacy" className="underline underline-offset-2 hover:text-black/70">privacy policy</Link>.
           </p>
         </div>
       </section>

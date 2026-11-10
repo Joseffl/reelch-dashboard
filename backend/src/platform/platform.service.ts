@@ -18,16 +18,20 @@ import { AiOutputError, AiService } from '../ai/ai.service.js';
 import { JobsService } from '../jobs/jobs.service.js';
 import { imageFingerprint, isNearDuplicate } from './evidence-fingerprint.js';
 import { decideProof, proofAssessmentSchema, proofReviewPrompt, proofReviewSystemPrompt, FIRST_PROOF_WINDOW_HOURS, firstProofDeadline, RESUBMIT_WINDOW_HOURS, resubmitDeadline, riskScore, sanitizeAssessment, type AiProofAssessment } from './proof-review.js';
+import { campaignCountry, campaignLocationAllows, campaignLocations } from './campaign-location.js';
+import { summarizeAnalytics } from './analytics.js';
+import { assistantContext, assistantPrompt, assistantSchema, assistantSystemPrompt, cleanHistory, MAX_QUESTION_LENGTH, sanitizeAnswer } from './business-assistant.js';
 
 type CreateCampaign = { title: string; description: string; unitPriceKobo: number; targetQuantity: number; targeting?: Record<string, unknown>; destinationUrl: string; conversionType?: string; startsAt?: string; endsAt?: string };
 const campaignCategories = new Set(['Beauty', 'Business', 'Education', 'Entertainment', 'Fashion', 'Finance', 'Fitness', 'Food', 'Gaming', 'Lifestyle', 'Music', 'Sports', 'Technology', 'Travel']);
-const campaignLocations = new Set(['Anywhere in Nigeria', 'Abia', 'Adamawa', 'Akwa Ibom', 'Anambra', 'Bauchi', 'Bayelsa', 'Benue', 'Borno', 'Cross River', 'Delta', 'Ebonyi', 'Edo', 'Ekiti', 'Enugu', 'Federal Capital Territory', 'Gombe', 'Imo', 'Jigawa', 'Kaduna', 'Kano', 'Katsina', 'Kebbi', 'Kogi', 'Kwara', 'Lagos', 'Nasarawa', 'Niger', 'Ogun', 'Ondo', 'Osun', 'Oyo', 'Plateau', 'Rivers', 'Sokoto', 'Taraba', 'Yobe', 'Zamfara']);
 
 const formatMinor = (minor: number, currency: string) => new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(minor / 100);
 
 @Injectable()
 export class PlatformService {
   private readonly logger = new Logger(PlatformService.name);
+  // Per-instance limit on assistant questions, so one account cannot run up AI costs.
+  private readonly assistantCalls = new Map<string, number[]>();
 
   constructor(@Inject(DatabaseService) private readonly database: DatabaseService, @Inject(R2StorageService) private readonly storage: R2StorageService, @Inject(PaystackService) private readonly paystack: PaystackService, @Inject(SocialVerificationService) private readonly socialVerification: SocialVerificationService, @Inject(PaypalService) private readonly paypal: PaypalService, @Inject(AiService) private readonly ai: AiService, @Inject(JobsService) private readonly jobs: JobsService) {}
 
@@ -164,7 +168,7 @@ export class PlatformService {
       conversionType: input.conversionType?.trim() || 'visibility', objective: 'visibility',
       unitPriceKobo: input.unitPriceKobo, targetQuantity: input.targetQuantity,
       budgetKobo: input.unitPriceKobo * input.targetQuantity,
-      targeting: { ...input.targeting, country: 'Nigeria', objective: 'visibility', destinationUrl: input.destinationUrl },
+      targeting: { ...input.targeting, country: campaignCountry(input.targeting?.location), objective: 'visibility', destinationUrl: input.destinationUrl },
       startsAt: input.startsAt ? new Date(input.startsAt) : undefined, endsAt: input.endsAt ? new Date(input.endsAt) : undefined,
     }).returning();
     await this.audit(user, 'campaign.created', 'campaign', campaign.id);
@@ -190,6 +194,50 @@ export class PlatformService {
   async businessCampaigns(user: AuthenticatedUser) {
     const business = await this.businessFor(user.id);
     return this.database.db.select().from(campaigns).where(eq(campaigns.businessId, business.id)).orderBy(desc(campaigns.createdAt));
+  }
+
+  private async analyticsFor(businessId: string) {
+    const currency = this.platformCurrency();
+    const rows = await this.database.db.select({ campaign: campaigns, reservation: campaignReservations }).from(campaigns)
+      .leftJoin(campaignReservations, eq(campaignReservations.campaignId, campaigns.id))
+      .where(and(eq(campaigns.businessId, businessId), eq(campaigns.currency, currency), inArray(campaigns.status, ['live', 'paused', 'completed'])));
+    const campaignIds = rows.map(row => row.campaign.id);
+    const proofRows = campaignIds.length ? await this.database.db.select({ proof: proofSubmissions, campaignId: campaignPromoters.campaignId }).from(proofSubmissions)
+      .innerJoin(campaignPromoters, eq(proofSubmissions.assignmentId, campaignPromoters.id)).where(inArray(campaignPromoters.campaignId, campaignIds)) : [];
+    const proofIds = proofRows.map(row => row.proof.id);
+    const snapshots = proofIds.length ? await this.database.db.select().from(proofMetricSnapshots).where(inArray(proofMetricSnapshots.proofSubmissionId, proofIds)).orderBy(desc(proofMetricSnapshots.capturedAt)) : [];
+    const latestViews = new Map<string, number | null>(); for (const snapshot of snapshots) if (!latestViews.has(snapshot.proofSubmissionId)) latestViews.set(snapshot.proofSubmissionId, snapshot.views);
+    const reviewed = await this.withAiReviews(proofRows);
+    const analytics = summarizeAnalytics(
+      rows.map(({ campaign, reservation }) => ({ id: campaign.id, title: campaign.title, status: campaign.status, currency: campaign.currency, unitPriceKobo: campaign.unitPriceKobo, targetQuantity: campaign.targetQuantity, fundedKobo: reservation?.amountKobo ?? 0, spentKobo: reservation?.consumedKobo ?? 0, createdAt: campaign.createdAt })),
+      reviewed.map(({ proof, campaignId, aiReview }) => ({ campaignId, platform: proof.platform, status: proof.status, createdAt: proof.createdAt, claimedViews: proof.claimedViews, aiViews: aiReview?.assessment?.extracted?.views ?? null, metricViews: latestViews.get(proof.id) ?? null, aiDecision: aiReview?.decision ?? null, fraudRisk: aiReview?.fraudRisk ?? null })),
+    );
+    return { analytics: { ...analytics, currency }, campaigns: rows.map(row => row.campaign) };
+  }
+
+  async businessAnalytics(user: AuthenticatedUser) {
+    const business = await this.businessFor(user.id);
+    return (await this.analyticsFor(business.id)).analytics;
+  }
+
+  async askBusinessAssistant(user: AuthenticatedUser, input: { question?: unknown; history?: unknown }) {
+    const question = typeof input.question === 'string' ? input.question.trim() : '';
+    if (!question) throw new BadRequestException('Ask a question about your campaigns');
+    if (question.length > MAX_QUESTION_LENGTH) throw new BadRequestException(`Keep your question under ${MAX_QUESTION_LENGTH} characters`);
+    if (!this.ai.configured) throw new ServiceUnavailableException('The assistant is not available right now');
+    const now = Date.now(); const recent = (this.assistantCalls.get(user.id) ?? []).filter(time => now - time < 10 * 60_000);
+    if (recent.length >= 20) throw new ConflictException('You have asked a lot of questions in a short time. Please wait a few minutes.');
+    this.assistantCalls.set(user.id, [...recent, now]);
+    const business = await this.businessFor(user.id);
+    const { analytics, campaigns: owned } = await this.analyticsFor(business.id);
+    const briefs = owned.map(campaign => { const targeting = campaign.targeting as Record<string, unknown>; return { id: campaign.id, title: campaign.title, status: campaign.status, rewardKobo: campaign.unitPriceKobo, platforms: Array.isArray(targeting.platforms) ? targeting.platforms.map(String) : [], hashtag: typeof targeting.requiredHashtag === 'string' ? targeting.requiredHashtag : undefined, location: typeof targeting.location === 'string' ? targeting.location : undefined }; });
+    try {
+      const response = await this.ai.generateJson<unknown>({ system: assistantSystemPrompt, schemaName: 'campaign_answer', schema: assistantSchema, parts: [{ type: 'text', text: assistantPrompt(assistantContext(business.name, analytics, briefs), question, cleanHistory(input.history)) }] });
+      return { ...sanitizeAnswer(response.data), model: response.model };
+    } catch (error) {
+      this.logger.warn(`Business assistant failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+      throw new ServiceUnavailableException('The assistant could not answer right now. Please try again.');
+    }
   }
 
   async businessCampaignDetail(user: AuthenticatedUser, campaignId: string) {
@@ -330,7 +378,7 @@ export class PlatformService {
     const [updated] = await this.database.db.update(campaigns).set({
       title: input.title?.trim() ?? campaign.title, description: input.description?.trim() ?? campaign.description,
       conversionType: input.conversionType?.trim() ?? campaign.conversionType, unitPriceKobo, targetQuantity,
-      budgetKobo: unitPriceKobo * targetQuantity, targeting: { ...(campaign.targeting as Record<string, unknown>), ...input.targeting, country: 'Nigeria', objective: 'visibility', destinationUrl },
+      budgetKobo: unitPriceKobo * targetQuantity, targeting: { ...(campaign.targeting as Record<string, unknown>), ...input.targeting, country: campaignCountry(input.targeting?.location ?? (campaign.targeting as Record<string, unknown>).location), objective: 'visibility', destinationUrl },
       startsAt: input.startsAt ? new Date(input.startsAt) : campaign.startsAt, endsAt: input.endsAt ? new Date(input.endsAt) : campaign.endsAt,
       status: 'draft', updatedAt: new Date(),
     }).where(eq(campaigns.id, campaignId)).returning();
@@ -665,15 +713,12 @@ export class PlatformService {
       .leftJoin(campaignPromoters, and(eq(campaignPromoters.campaignId, campaigns.id), eq(campaignPromoters.promoterId, promoter.id)))
       .where(eq(campaigns.status, 'live')).orderBy(desc(campaigns.createdAt));
     const niches = new Set(promoter.niches.map(value => value.toLowerCase()));
-    const location = promoter.city?.trim().toLowerCase();
     return opportunities.filter(({ campaign, assignmentStatus }) => {
       if (assignmentStatus === 'removed') return false;
       const targeting = campaign.targeting as Record<string, unknown>;
       const category = typeof targeting.category === 'string' ? targeting.category.toLowerCase() : '';
-      const targetLocation = typeof targeting.location === 'string' ? targeting.location.toLowerCase() : 'anywhere in nigeria';
       const categoryMatches = !category || niches.has(category);
-      const locationMatches = targetLocation === 'anywhere in nigeria' || (!!location && location === targetLocation);
-      return categoryMatches && locationMatches;
+      return categoryMatches && campaignLocationAllows(targeting.location, promoter);
     }).map(opportunity => ({ ...opportunity, promoterVerificationStatus: promoter.verificationStatus }));
   }
 
@@ -707,9 +752,8 @@ export class PlatformService {
       }
       const targeting = campaign.targeting as Record<string, unknown>;
       const category = typeof targeting.category === 'string' ? targeting.category.toLowerCase() : '';
-      const targetLocation = typeof targeting.location === 'string' ? targeting.location.toLowerCase() : 'anywhere in nigeria';
       if (category && !promoter.niches.some(niche => niche.toLowerCase() === category)) throw new ForbiddenException('This campaign does not match your profile category');
-      if (targetLocation !== 'anywhere in nigeria' && promoter.city?.trim().toLowerCase() !== targetLocation) throw new ForbiddenException('This campaign is not available in your location');
+      if (!campaignLocationAllows(targeting.location, promoter)) throw new ForbiddenException('This campaign is not available in your location');
       const allocations = await tx.select({ total: sql<number>`coalesce(sum(${campaignPromoters.targetQuantity}), 0)::int` }).from(campaignPromoters).where(and(eq(campaignPromoters.campaignId, campaignId), ne(campaignPromoters.status, 'removed')));
       if (Number(allocations[0]?.total ?? 0) >= campaign.targetQuantity) throw new ConflictException('All available campaign slots have been taken');
       const destinationUrl = String(targeting.destinationUrl ?? '');
@@ -1064,7 +1108,7 @@ export class PlatformService {
     if (input.claimedViews !== undefined && (!Number.isInteger(input.claimedViews) || input.claimedViews < 0)) throw new BadRequestException('Claimed views must be a positive whole number');
     if (platform === 'whatsapp' && !input.storageKey) throw new BadRequestException('Upload evidence for a WhatsApp submission');
     if (input.storageKey) await this.storage.assertProofUpload(user.id, assignmentId, input.storageKey, String(input.contentType), Number(input.sizeBytes));
-    const verification = await this.socialVerification.verify(platform, input.submittedUrl);
+    const verification = await this.socialVerification.verify(platform, input.submittedUrl, { hasEvidence: Boolean(input.storageKey) });
     const connectedProfile = await this.database.db.query.socialAccounts.findFirst({ where: and(eq(socialAccounts.promoterId, promoter.id), eq(socialAccounts.platform, platform)) });
     const expectedHandle = connectedProfile?.handle.replace(/^@/, '').replace(/^https?:\/\/[^/]+\/@?/, '').split(/[/?#]/)[0].toLowerCase();
     const returnedHandle = String(verification.checks.username ?? verification.checks.authorHandle ?? verification.externalAuthorId ?? '').replace(/^@/, '').toLowerCase();
