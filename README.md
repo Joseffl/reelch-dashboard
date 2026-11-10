@@ -11,6 +11,32 @@ backend/    NestJS API and a separate PostgreSQL-backed background worker
 
 The applications deliberately keep their own dependencies and lockfiles. Root scripts run checks across both without blending their source trees.
 
+## AI verification and PayPal settlement
+
+Businesses fund campaigns with PayPal Checkout (Orders v2). The budget is held in a campaign escrow wallet in the Reelch ledger. When a promoter submits proof, Reelch:
+
+1. Checks the post with platform data where available (X API, TikTok oEmbed), plus ownership, hashtag and view rules.
+2. Sends the campaign brief, the platform data and the screenshot to a multimodal model. The model returns structured JSON: requirement checks, content match, extracted handle and views, and fraud signals.
+3. Runs a deterministic policy (`backend/src/platform/proof-review.ts`). A proof is paid without a person only if every check passes. Anything else goes to the admin queue with the reasons.
+4. Pays approved earnings to the promoter's PayPal email with the Payouts API, and keeps the payout status in sync through webhooks or polling.
+
+Content match, fraud risk and assurance level ("Platform verified" or "Evidence reviewed") are kept separate. The model never decides a payout by itself.
+
+Configure in `backend/.env`:
+
+- `AI_PROVIDER`, `AI_MODEL`, `AI_API_KEY`: the default is Gemini `gemini-3.5-flash-lite`. `AI_PROVIDER=openai-compatible` with `AI_BASE_URL` works with OpenAI, OpenRouter, Groq and similar APIs.
+- `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `PAYPAL_ENV=sandbox`: from a REST app at developer.paypal.com.
+- `PAYPAL_WEBHOOK_ID`: create a webhook pointing at `<api>/api/v1/webhooks/paypal` for `CHECKOUT.ORDER.APPROVED`, `PAYMENT.CAPTURE.COMPLETED` and `PAYMENT.PAYOUTS-ITEM.*`. Locally, payouts sync when the promoter opens Earnings, so webhooks are optional.
+- `AI_AUTO_APPROVE_EVIDENCE_ONLY=true` lets screenshot-only proofs auto-pay. Use it for demos only, because a screenshot cannot prove views.
+
+A promoter's campaign slot opens up again if they submit no proof within 72 hours of joining, or don't resubmit within 24 hours of a rejection. Promoters with verified results keep their allocation. The windows are constants in `backend/src/platform/proof-review.ts`.
+
+A business can end a live campaign once its proofs are decided. Unspent budget is refunded to the original PayPal capture, or to the business wallet for other funding. A campaign also completes by itself when its budget is fully spent.
+
+Exact copies of a screenshot are caught by file hash. Re-saved copies are caught within a campaign by an image fingerprint combined with the view count the model read, because honest promoters posting the same creative look alike (`backend/src/platform/evidence-fingerprint.ts`).
+
+`PAYMENT_PROVIDER=paystack` switches new campaigns back to NGN and Paystack. Existing NGN campaigns always settle through Paystack.
+
 ## Requirements
 
 - Node.js 22.22.3 or newer in the Node 22 line
@@ -39,6 +65,10 @@ Frontend: <http://localhost:3000>
 Backend health: <http://localhost:4000/api/v1/health>
 
 Backend readiness, including database connectivity: <http://localhost:4000/api/v1/ready>
+
+## Licence
+
+Reelch is released under the [MIT licence](./LICENSE).
 
 ## Checks
 

@@ -6,10 +6,15 @@ import { Public, Roles } from '../auth/auth.decorators.js';
 import type { AuthenticatedRequest } from '../auth/auth.types.js';
 import { PlatformService } from './platform.service.js';
 import { JobsService } from '../jobs/jobs.service.js';
+import { PaypalService } from './paypal.service.js';
 
 @Controller()
 export class PlatformController {
-  constructor(@Inject(PlatformService) private readonly platform: PlatformService, @Inject(JobsService) private readonly jobs: JobsService) {}
+  constructor(@Inject(PlatformService) private readonly platform: PlatformService, @Inject(JobsService) private readonly jobs: JobsService, @Inject(PaypalService) private readonly paypal: PaypalService) {}
+
+  @Public()
+  @Get('platform/config')
+  publicConfig() { return this.platform.publicConfig(); }
 
   @Roles('admin')
   @Get('admin/administrators')
@@ -170,6 +175,14 @@ export class PlatformController {
   }
 
   @Roles('promoter')
+  @Get('promoter/earnings')
+  promoterEarnings(@Req() req: AuthenticatedRequest) { return this.platform.promoterEarnings(req.user); }
+
+  @Roles('promoter')
+  @Post('promoter/payout-accounts/paypal')
+  setPaypalPayoutAccount(@Req() req: AuthenticatedRequest, @Body() body: { email: string }) { return this.platform.setPaypalPayoutAccount(req.user, body); }
+
+  @Roles('promoter')
   @Post('promoter/payout-accounts')
   addPayoutAccount(@Req() req: AuthenticatedRequest, @Body() body: Parameters<PlatformService['addPayoutAccount']>[1]) {
     return this.platform.addPayoutAccount(req.user, body);
@@ -180,6 +193,26 @@ export class PlatformController {
   withdraw(@Req() req: AuthenticatedRequest, @Headers('idempotency-key') key: string, @Body() body: Parameters<PlatformService['requestWithdrawal']>[1]) {
     return this.platform.requestWithdrawal(req.user, body, key);
   }
+
+  @Roles('business')
+  @Post('business/campaigns/:id/close')
+  closeCampaign(@Req() req: AuthenticatedRequest, @Param('id') id: string) { return this.platform.closeCampaign(req.user, id); }
+
+  @Roles('admin')
+  @Get('admin/withdrawals')
+  adminWithdrawals() { return this.platform.adminWithdrawals(); }
+
+  @Roles('admin')
+  @Get('admin/ledger')
+  adminLedger() { return this.platform.adminLedger(); }
+
+  @Roles('admin')
+  @Post('admin/withdrawals/:id/paypal-payout')
+  sendPaypalPayout(@Req() req: AuthenticatedRequest, @Param('id') id: string) { return this.platform.sendPaypalPayout(id, req.user.id); }
+
+  @Roles('admin')
+  @Post('admin/withdrawals/:id/sync')
+  syncWithdrawal(@Param('id') id: string) { return this.platform.syncPaypalPayout(id); }
 
   @Roles('admin')
   @Post('admin/withdrawals/:id/process')
@@ -225,6 +258,10 @@ export class PlatformController {
   adminProofs(@Query('status') status?: string) { return this.platform.adminProofs(status); }
 
   @Roles('admin')
+  @Post('admin/proofs/:id/ai-review')
+  rerunProofAiReview(@Req() req: AuthenticatedRequest, @Param('id') id: string) { return this.platform.rerunProofAiReview(req.user, id); }
+
+  @Roles('admin')
   @Post('admin/proofs/:id/review')
   reviewProof(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() body: Parameters<PlatformService['reviewProof']>[2]) {
     return this.platform.reviewProof(req.user, id, body);
@@ -257,6 +294,15 @@ export class PlatformController {
     const valid = received.length === expected.length && timingSafeEqual(received, Buffer.from(expected));
     if (!valid) throw new UnauthorizedException('Valid webhook signature required');
     return this.platform.recordConversion(body);
+  }
+
+  @Public()
+  @Post('webhooks/paypal')
+  @HttpCode(200)
+  async paypalWebhook(@Req() req: RawBodyRequest<Request>, @Headers() headers: Record<string, string | undefined>, @Body() body: Parameters<PlatformService['processPaypalWebhook']>[0]) {
+    const raw = req.rawBody;
+    if (!raw || !(await this.paypal.verifyWebhook(headers, JSON.parse(raw.toString('utf8'))))) throw new UnauthorizedException('Valid PayPal signature required');
+    return this.platform.processPaypalWebhook(body, createHash('sha256').update(raw).digest('hex'));
   }
 
   @Public()

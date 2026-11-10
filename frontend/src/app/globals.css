@@ -160,3 +160,4 @@
 }
 
 .phone-field input{margin-top:0!important;border:0!important;border-radius:0!important;padding:12px!important;box-shadow:none!important;background:transparent!important}.phone-field .phone-country{margin-top:0!important;border:0!important;border-right:1px solid #17181118!important;border-radius:0!important;padding:0 8px!important;width:122px!important}
+.mini-report .mini-checks{list-style:none;margin:12px 0;padding:0;display:grid;gap:8px}.mini-report .mini-checks li{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600}.mini-report .mini-checks svg{width:16px;height:16px;flex:none;color:#2f8f2f}.mini-report small svg{display:inline;width:13px;height:13px;vertical-align:-2px}

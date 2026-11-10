@@ -3,6 +3,7 @@ import { toast } from "@/components/toasts";
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { NOTIFICATIONS_READ_EVENT } from "@/components/notifications-page";
 import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import { DashboardSkeleton } from "@/components/loading-skeleton";
@@ -24,7 +25,6 @@ import {
   Menu,
   Megaphone,
   SearchCheck,
-  Settings,
   ShieldCheck,
   Scale,
   Sparkles,
@@ -113,6 +113,18 @@ function SidebarContent({ role, accent, navigation, userEmail, onLogout, onNavig
   const pathname = usePathname();
   const RoleIcon = roleIcons[role] ?? Gauge;
   const rolePath = role === "Operations" ? "admin" : role.toLowerCase();
+  const [unread, setUnread] = useState(0);
+
+  useEffect(() => {
+    let active = true;
+    const load = () => fetch(`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000/api/v1"}/notifications`, { credentials: "include" })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((items: Array<{ readAt: string | null }> | null) => { if (active && Array.isArray(items)) setUnread(items.filter((item) => !item.readAt).length); })
+      .catch(() => undefined);
+    void load();
+    window.addEventListener(NOTIFICATIONS_READ_EVENT, load);
+    return () => { active = false; window.removeEventListener(NOTIFICATIONS_READ_EVENT, load); };
+  }, [pathname]);
 
   return (
     <div className="flex h-full flex-col">
@@ -163,7 +175,8 @@ function SidebarContent({ role, accent, navigation, userEmail, onLogout, onNavig
                 >
                   <Icon className={`size-[1.15rem] shrink-0 ${active ? "text-[#6558ff]" : "text-white/42 group-hover:text-white/80"}`} strokeWidth={2} />
                   <span>{item.label}</span>
-                  {active && <span className="ml-auto size-1.5 rounded-full bg-[#6558ff]" aria-hidden="true" />}
+                  {item.icon === "notifications" && unread > 0 && <span className="ml-auto grid h-5 min-w-5 place-items-center rounded-full bg-[#6558ff] px-1.5 text-[0.68rem] font-black text-white">{unread > 49 ? "50+" : unread}<span className="sr-only"> unread</span></span>}
+                  {active && !(item.icon === "notifications" && unread > 0) && <span className="ml-auto size-1.5 rounded-full bg-[#6558ff]" aria-hidden="true" />}
                 </Link>
               </li>
             );
@@ -180,9 +193,8 @@ function SidebarContent({ role, accent, navigation, userEmail, onLogout, onNavig
           </div>
           <UserCircle className="ml-auto size-4 text-white/35" />
         </Link>
-        <div className="mt-2 grid grid-cols-2 gap-2 border-t border-white/10 pt-3">
-          <Link href={`/${rolePath}/settings`} onClick={onNavigate} className="flex min-h-10 items-center justify-center gap-2 rounded-xl text-xs font-bold text-white/55 hover:bg-white/[0.07] hover:text-white"><Settings className="size-4" /> Settings</Link>
-          <button type="button" onClick={onLogout} className="flex min-h-10 items-center justify-center gap-2 rounded-xl text-xs font-bold text-white/55 hover:bg-white/[0.07] hover:text-white"><LogOut className="size-4" /> Sign out</button>
+        <div className="mt-2 border-t border-white/10 pt-3">
+          <button type="button" onClick={onLogout} className="flex min-h-10 w-full items-center justify-center gap-2 rounded-xl text-xs font-bold text-white/55 hover:bg-white/[0.07] hover:text-white"><LogOut className="size-4" /> Sign out</button>
         </div>
       </div>
     </div>

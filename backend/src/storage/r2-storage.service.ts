@@ -95,6 +95,13 @@ export class R2StorageService {
     }
   }
 
+  async readObject(key: string) {
+    const { client, bucket } = this.configured();
+    const object = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+    if (!object.Body || Number(object.ContentLength ?? 0) > maximumBytes) throw new BadRequestException('Stored file is missing or too large');
+    return { data: Buffer.from(await object.Body.transformToByteArray()), contentType: object.ContentType ?? 'application/octet-stream' };
+  }
+
   async createReadUrl(key: string) {
     const { client, bucket } = this.configured();
     return getSignedUrl(client, new GetObjectCommand({ Bucket: bucket, Key: key }), { expiresIn: 300 });

@@ -2,7 +2,8 @@
 
 import { useErrorToast, ErrorFallback } from "@/components/toasts";
 
-import { ExternalLink } from "lucide-react";
+import { ExternalLink, RefreshCw } from "lucide-react";
+import { AiReviewPanel, type AiReview } from "@/components/ai-review-panel";
 import { useCallback, useEffect, useState } from "react";
 import { ListSkeleton } from "@/components/loading-skeleton";
 
@@ -23,6 +24,7 @@ type Row = {
   campaignTitle: string;
   promoterUsername: string;
   promoterName: string;
+  aiReview: AiReview | null;
 };
 
 async function json(response: Response) {
@@ -33,7 +35,7 @@ async function json(response: Response) {
 
 export function AdminProofs() {
   const [items, setItems] = useState<Row[] | null>(null);
-  const [status, setStatus] = useState("submitted");
+  const [status, setStatus] = useState("under_review");
   const [busy, setBusy] = useState("");
   const [error, setError] = useErrorToast();
   const [rejecting, setRejecting] = useState("");
@@ -91,6 +93,19 @@ export function AdminProofs() {
     }
   }
 
+  async function recheck(id: string) {
+    setBusy(id);
+    setError("");
+    try {
+      await fetch(`${apiUrl}/admin/proofs/${id}/ai-review`, { method: "POST", credentials: "include" }).then(json);
+      await load();
+    } catch (recheckError) {
+      setError(recheckError instanceof Error ? recheckError.message : "AI re-check failed");
+    } finally {
+      setBusy("");
+    }
+  }
+
   async function evidence(id: string) {
     try {
       const body = await fetch(`${apiUrl}/proofs/${id}/evidence`, {
@@ -106,7 +121,7 @@ export function AdminProofs() {
   return (
     <div>
       <div className="flex flex-wrap gap-2">
-        {["submitted", "under_review", "approved", "rejected"].map((value) => (
+        {["under_review", "submitted", "approved", "rejected"].map((value) => (
           <button
             key={value}
             onClick={() => {
@@ -151,12 +166,14 @@ export function AdminProofs() {
                   <dd className="font-black">{Number(item.proof.claimedViews || 0).toLocaleString()}</dd>
                 </div>
                 <div>
-                  <dt className="text-xs text-black/40">Automated checks</dt>
+                  <dt className="text-xs text-black/40">Platform checks</dt>
                   <dd className="font-black">
-                    {item.proof.automatedChecks.hashtagMatches === false ? "Needs attention" : "Passed / manual"}
+                    {item.proof.verificationMethod === "manual" ? "Not available" : item.proof.automatedChecks.hashtagMatches === false ? "Needs attention" : "Passed"}
                   </dd>
                 </div>
               </dl>
+
+              <AiReviewPanel review={item.aiReview} />
 
               {rejecting === item.proof.id && (
                 <div className="mt-5 rounded-2xl bg-red-50 p-4">
@@ -207,7 +224,7 @@ export function AdminProofs() {
                 {item.proof.storageKey && (
                   <button
                     onClick={() => evidence(item.proof.id)}
-                    className="rounded-xl border border-black/10 px-3 text-xs font-bold"
+                    className="min-h-10 rounded-xl border border-black/10 px-3 text-xs font-bold"
                   >
                     Evidence
                   </button>
@@ -216,18 +233,25 @@ export function AdminProofs() {
                   <>
                     <button
                       disabled={busy === item.proof.id}
+                      onClick={() => recheck(item.proof.id)}
+                      className="inline-flex min-h-10 items-center gap-1 rounded-xl border border-black/10 px-3 text-xs font-bold disabled:opacity-50"
+                    >
+                      <RefreshCw className={`size-3 ${busy === item.proof.id ? "animate-spin" : ""}`} /> Re-run AI
+                    </button>
+                    <button
+                      disabled={busy === item.proof.id}
                       onClick={() => {
                         setRejecting(item.proof.id);
                         setReason("");
                       }}
-                      className="ml-auto rounded-xl bg-red-50 px-3 text-xs font-bold text-red-700"
+                      className="ml-auto min-h-10 rounded-xl bg-red-50 px-3 text-xs font-bold text-red-700"
                     >
                       Reject
                     </button>
                     <button
                       disabled={busy === item.proof.id}
                       onClick={() => decide(item.proof.id, "approved")}
-                      className="rounded-xl bg-[#171811] px-4 text-xs font-bold text-white disabled:opacity-50"
+                      className="min-h-10 rounded-xl bg-[#171811] px-4 text-xs font-bold text-white disabled:opacity-50"
                     >
                       {busy === item.proof.id ? "Processing…" : "Approve & pay"}
                     </button>

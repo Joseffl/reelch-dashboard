@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import { PgBoss } from 'pg-boss';
-import { WELCOME_QUEUE, CLEANUP_QUEUE, PAYSTACK_QUEUE, EMAIL_QUEUE } from './jobs.service.js';
+import { WELCOME_QUEUE, CLEANUP_QUEUE, PAYSTACK_QUEUE, EMAIL_QUEUE, PROOF_REVIEW_QUEUE, PAYOUT_SYNC_QUEUE } from './jobs.service.js';
 
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required');
 const boss = new PgBoss({ connectionString: process.env.DATABASE_URL, max: 2, supervise: false, schedule: false });
@@ -16,4 +16,10 @@ try {
   await boss.updateQueue(EMAIL_QUEUE, emailOptions);
   await boss.createQueue(PAYSTACK_QUEUE, { retryLimit: 8, retryDelay: 10, retryBackoff: true, deadLetter: 'launch-dead-letter', retentionSeconds: 7 * 86400 });
   await boss.updateQueue(PAYSTACK_QUEUE, { retryLimit: 8, retryDelay: 10, retryBackoff: true, deadLetter: 'launch-dead-letter', retentionSeconds: 7 * 86400 });
+  const proofOptions = { retryLimit: 3, retryDelay: 20, retryBackoff: true, deadLetter: 'launch-dead-letter', retentionSeconds: 7 * 86400 };
+  await boss.createQueue(PROOF_REVIEW_QUEUE, proofOptions);
+  await boss.updateQueue(PROOF_REVIEW_QUEUE, proofOptions);
+  const payoutOptions = { retryLimit: 12, retryDelay: 30, retryBackoff: true, deadLetter: 'launch-dead-letter', retentionSeconds: 7 * 86400 };
+  await boss.createQueue(PAYOUT_SYNC_QUEUE, payoutOptions);
+  await boss.updateQueue(PAYOUT_SYNC_QUEUE, payoutOptions);
 } finally { await boss.stop(); }

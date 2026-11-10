@@ -3,7 +3,7 @@ import { NestFactory } from '@nestjs/core';
 import { PgBoss } from 'pg-boss';
 import { createServer } from 'node:http';
 import { WorkerModule } from './jobs/worker.module.js';
-import { WELCOME_QUEUE, CLEANUP_QUEUE, PAYSTACK_QUEUE, EMAIL_QUEUE } from './jobs/jobs.service.js';
+import { WELCOME_QUEUE, CLEANUP_QUEUE, PAYSTACK_QUEUE, EMAIL_QUEUE, PROOF_REVIEW_QUEUE, PAYOUT_SYNC_QUEUE } from './jobs/jobs.service.js';
 import { EmailService } from './email/email.service.js';
 import { JobHandlersService } from './jobs/job-handlers.service.js';
 import { DatabaseService } from './database/database.service.js';
@@ -36,6 +36,14 @@ await boss.work<{ reference: string; receiptId: string }>(PAYSTACK_QUEUE, {
   localConcurrency: positiveInteger('PAYMENT_WORKER_CONCURRENCY', 2, 16), pollingIntervalSeconds: 1,
 }, async ([job]) => {
   await handlers.paystack(job.data.reference, job.data.receiptId);
+});
+await boss.work<{ proofId: string }>(PROOF_REVIEW_QUEUE, {
+  localConcurrency: positiveInteger('AI_WORKER_CONCURRENCY', 2, 16), pollingIntervalSeconds: 1,
+}, async ([job]) => {
+  await handlers.proofReview(job.data.proofId);
+});
+await boss.work<{ withdrawalId: string }>(PAYOUT_SYNC_QUEUE, { pollingIntervalSeconds: 5 }, async ([job]) => {
+  await handlers.payoutSync(job.data.withdrawalId);
 });
 await boss.schedule(CLEANUP_QUEUE, '*/10 * * * *');
 if (process.env.EMAIL_ENABLED === 'true') {

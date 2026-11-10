@@ -8,6 +8,8 @@ export const WELCOME_QUEUE = 'welcome-notification';
 export const CLEANUP_QUEUE = 'rate-limit-cleanup';
 export const PAYSTACK_QUEUE = 'paystack-charge';
 export const EMAIL_QUEUE = 'transactional-email';
+export const PROOF_REVIEW_QUEUE = 'proof-ai-review';
+export const PAYOUT_SYNC_QUEUE = 'paypal-payout-sync';
 
 @Injectable()
 export class JobsService implements OnModuleDestroy {
@@ -73,6 +75,17 @@ export class JobsService implements OnModuleDestroy {
       }
       return { received: true };
     });
+  }
+
+  async enqueueProofReview(proofId: string) {
+    await this.ready();
+    await this.boss.send(PROOF_REVIEW_QUEUE, { proofId }, { singletonKey: proofId, retryLimit: 3, retryDelay: 20, retryBackoff: true, expireInSeconds: 120 });
+  }
+
+  async enqueuePayoutSync(withdrawalId: string) {
+    await this.ready();
+    // The handler throws while PayPal still reports the payout as pending, so retries act as polling.
+    await this.boss.send(PAYOUT_SYNC_QUEUE, { withdrawalId }, { singletonKey: withdrawalId, startAfter: 15, retryLimit: 12, retryDelay: 30, retryBackoff: true, expireInSeconds: 60 });
   }
 
   async onModuleDestroy() {

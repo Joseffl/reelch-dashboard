@@ -1,28 +1,46 @@
 import { Inject, BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
-import { and, asc, desc, eq, gt, ilike, inArray, isNull, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, ilike, inArray, isNull, ne, or, sql, type SQL } from 'drizzle-orm';
 import { createHash, randomBytes } from 'node:crypto';
 import { DatabaseService } from '../database/database.service.js';
 import {
   administratorInvitations, administrators, auditLogs, businesses, campaignCreatives, campaignPromoters, campaignReservations, campaigns,
   campaignStatusHistory, conversions, fraudFlags, ledgerEntries, ledgerTransactions,
   disputeEvidence, disputes, inboundWebhookEvents, notifications, payoutAccounts, proofSubmissions,
-  paymentAttempts, proofMetricSnapshots, promoterApplications, promoters, referralLinks, socialAccounts, trackingEvents, users, verificationDocuments, verificationRequests,
+  paymentAttempts, proofAiReviews, proofMetricSnapshots, promoterApplications, promoters, referralLinks, socialAccounts, trackingEvents, users, verificationDocuments, verificationRequests,
   verificationResults, virtualAccounts, wallets, withdrawals,
 } from '../database/schema/index.js';
 import type { AuthenticatedUser } from '../auth/auth.types.js';
 import { R2StorageService } from '../storage/r2-storage.service.js';
 import { PaystackService, type PaystackVerification } from './paystack.service.js';
 import { SocialVerificationService } from './social-verification.service.js';
+import { PaypalService, type FundingVerification } from './paypal.service.js';
+import { AiOutputError, AiService } from '../ai/ai.service.js';
+import { JobsService } from '../jobs/jobs.service.js';
+import { imageFingerprint, isNearDuplicate } from './evidence-fingerprint.js';
+import { decideProof, proofAssessmentSchema, proofReviewPrompt, proofReviewSystemPrompt, FIRST_PROOF_WINDOW_HOURS, firstProofDeadline, RESUBMIT_WINDOW_HOURS, resubmitDeadline, riskScore, sanitizeAssessment, type AiProofAssessment } from './proof-review.js';
 
 type CreateCampaign = { title: string; description: string; unitPriceKobo: number; targetQuantity: number; targeting?: Record<string, unknown>; destinationUrl: string; conversionType?: string; startsAt?: string; endsAt?: string };
 const campaignCategories = new Set(['Beauty', 'Business', 'Education', 'Entertainment', 'Fashion', 'Finance', 'Fitness', 'Food', 'Gaming', 'Lifestyle', 'Music', 'Sports', 'Technology', 'Travel']);
 const campaignLocations = new Set(['Anywhere in Nigeria', 'Abia', 'Adamawa', 'Akwa Ibom', 'Anambra', 'Bauchi', 'Bayelsa', 'Benue', 'Borno', 'Cross River', 'Delta', 'Ebonyi', 'Edo', 'Ekiti', 'Enugu', 'Federal Capital Territory', 'Gombe', 'Imo', 'Jigawa', 'Kaduna', 'Kano', 'Katsina', 'Kebbi', 'Kogi', 'Kwara', 'Lagos', 'Nasarawa', 'Niger', 'Ogun', 'Ondo', 'Osun', 'Oyo', 'Plateau', 'Rivers', 'Sokoto', 'Taraba', 'Yobe', 'Zamfara']);
 
+const formatMinor = (minor: number, currency: string) => new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(minor / 100);
+
 @Injectable()
 export class PlatformService {
   private readonly logger = new Logger(PlatformService.name);
 
-  constructor(@Inject(DatabaseService) private readonly database: DatabaseService, @Inject(R2StorageService) private readonly storage: R2StorageService, @Inject(PaystackService) private readonly paystack: PaystackService, @Inject(SocialVerificationService) private readonly socialVerification: SocialVerificationService) {}
+  constructor(@Inject(DatabaseService) private readonly database: DatabaseService, @Inject(R2StorageService) private readonly storage: R2StorageService, @Inject(PaystackService) private readonly paystack: PaystackService, @Inject(SocialVerificationService) private readonly socialVerification: SocialVerificationService, @Inject(PaypalService) private readonly paypal: PaypalService, @Inject(AiService) private readonly ai: AiService, @Inject(JobsService) private readonly jobs: JobsService) {}
+
+  // PayPal cannot settle NGN, so the campaign currency decides the payment rail.
+  platformCurrency() {
+    return (process.env.PAYMENT_PROVIDER?.trim().toLowerCase() || 'paypal') === 'paystack' ? 'NGN' : (process.env.PAYPAL_CURRENCY?.trim().toUpperCase() || 'USD');
+  }
+  private providerFor(currency: string) { return currency === 'NGN' ? 'paystack' : 'paypal'; }
+
+  publicConfig() {
+    const currency = this.platformCurrency();
+    return { paymentProvider: this.providerFor(currency), currency, aiVerification: this.ai.configured };
+  }
 
   async administrators(user: AuthenticatedUser) {
     await this.requireSuperAdmin(user.id);
@@ -134,7 +152,7 @@ export class PlatformService {
 
   async createCampaign(user: AuthenticatedUser, input: CreateCampaign) {
     if (!input.title?.trim() || !input.description?.trim() || !Number.isInteger(input.unitPriceKobo) || input.unitPriceKobo < 100 || !Number.isInteger(input.targetQuantity) || input.targetQuantity < 1) {
-      throw new BadRequestException('Title, description, positive target, and unit price of at least 100 kobo are required');
+      throw new BadRequestException('Title, description, positive target, and unit price of at least 1.00 are required');
     }
     try { new URL(input.destinationUrl); } catch { throw new BadRequestException('A valid destinationUrl is required'); }
     this.validateCampaignTargeting(input.targeting);
@@ -142,7 +160,7 @@ export class PlatformService {
     const business = await this.businessFor(user.id);
     if (business.verificationStatus !== 'approved') throw new ForbiddenException('Business verification is required');
     const [campaign] = await this.database.db.insert(campaigns).values({
-      businessId: business.id, title: input.title.trim(), description: input.description.trim(),
+      businessId: business.id, title: input.title.trim(), description: input.description.trim(), currency: this.platformCurrency(),
       conversionType: input.conversionType?.trim() || 'visibility',
       unitPriceKobo: input.unitPriceKobo, targetQuantity: input.targetQuantity,
       budgetKobo: input.unitPriceKobo * input.targetQuantity,
@@ -181,7 +199,107 @@ export class PlatformService {
       this.database.db.select().from(campaignStatusHistory).where(eq(campaignStatusHistory.campaignId, campaignId)).orderBy(desc(campaignStatusHistory.createdAt)),
     ]);
     const applications = await this.businessCampaignApplications(user, campaignId);
-    return { campaign, creatives, history, applications };
+    return { campaign, creatives, history, applications, results: await this.campaignResults(campaign) };
+  }
+
+  // Ends a live campaign and returns whatever was not spent. The ledger and status change commit first,
+  // so no proof can be paid from money already on its way back. A failed PayPal call can then be retried.
+  async closeCampaign(user: AuthenticatedUser, campaignId: string) {
+    const campaign = await this.ownedCampaign(user.id, campaignId);
+    if (campaign.status === 'completed') {
+      const reservation = await this.database.db.query.campaignReservations.findFirst({ where: eq(campaignReservations.campaignId, campaignId) });
+      if (reservation?.refundDestination === 'paypal' && reservation.refundStatus !== 'completed') return this.sendCampaignRefund(campaignId);
+    }
+    if (campaign.status !== 'live') throw new ConflictException('Only live campaigns can be ended');
+    const business = await this.businessFor(user.id);
+    const funding = await this.fundingCapture(campaignId);
+    const remaining = await this.database.db.transaction(async (tx) => {
+      const current = await tx.query.campaigns.findFirst({ where: eq(campaigns.id, campaignId) });
+      const reservation = await tx.query.campaignReservations.findFirst({ where: eq(campaignReservations.campaignId, campaignId) });
+      if (current?.status !== 'live' || !reservation) throw new ConflictException('Only live campaigns can be ended');
+      const [pending] = await tx.select({ total: sql<number>`count(*)::int` }).from(proofSubmissions).innerJoin(campaignPromoters, eq(proofSubmissions.assignmentId, campaignPromoters.id))
+        .where(and(eq(campaignPromoters.campaignId, campaignId), inArray(proofSubmissions.status, ['submitted', 'under_review'])));
+      if (Number(pending?.total ?? 0) > 0) throw new ConflictException(`${pending.total} submitted proof${pending.total === 1 ? ' is' : 's are'} still being reviewed. You can end the campaign once they are decided.`);
+      const unspent = reservation.amountKobo - reservation.consumedKobo - reservation.releasedKobo;
+      const destination = funding ? 'paypal' : 'wallet';
+      await tx.update(campaignReservations).set({ releasedKobo: sql`${campaignReservations.releasedKobo} + ${unspent}`, refundStatus: unspent <= 0 ? 'none' : funding ? 'pending' : 'completed', refundDestination: unspent > 0 ? destination : null, updatedAt: new Date() }).where(eq(campaignReservations.id, reservation.id));
+      if (unspent > 0) {
+        const target = await this.walletFor(tx, funding ? 'payment_clearing' : 'business', business.id, campaign.currency);
+        const [ledger] = await tx.insert(ledgerTransactions).values({ type: 'campaign_refund', reference: campaignId, idempotencyKey: `campaign-close:${campaignId}`, metadata: { destination } }).returning();
+        await tx.insert(ledgerEntries).values([
+          { transactionId: ledger.id, walletId: reservation.walletId, direction: 'debit', amountKobo: unspent, currency: campaign.currency },
+          { transactionId: ledger.id, walletId: target.id, direction: 'credit', amountKobo: unspent, currency: campaign.currency },
+        ]);
+      }
+      await tx.update(campaigns).set({ status: 'completed', updatedAt: new Date() }).where(eq(campaigns.id, campaignId));
+      await tx.insert(campaignStatusHistory).values({ campaignId, fromStatus: 'live', toStatus: 'completed', actorUserId: user.id, reason: 'Ended by the business' });
+      return unspent;
+    }, { isolationLevel: 'serializable' });
+    await this.audit(user, 'campaign.closed', 'campaign', campaignId, { refundedKobo: remaining });
+    const open = await this.database.db.select({ userId: promoters.userId }).from(campaignPromoters).innerJoin(promoters, eq(campaignPromoters.promoterId, promoters.id))
+      .where(and(eq(campaignPromoters.campaignId, campaignId), inArray(campaignPromoters.status, ['accepted', 'active']), eq(campaignPromoters.verifiedResults, 0)));
+    for (const slot of open) await this.notify(slot.userId, 'campaign_closed', 'Campaign ended', `${campaign.title} has ended and is no longer accepting proof.`, { campaignId });
+    return funding && remaining > 0 ? this.sendCampaignRefund(campaignId) : this.campaign(campaignId);
+  }
+
+  private async fundingCapture(campaignId: string) {
+    const attempt = await this.database.db.query.paymentAttempts.findFirst({ where: and(eq(paymentAttempts.campaignId, campaignId), eq(paymentAttempts.provider, 'paypal'), eq(paymentAttempts.status, 'success')) });
+    const order = attempt?.providerResponse as { purchase_units?: Array<{ payments?: { captures?: Array<{ id: string }> } }> } | null | undefined;
+    return order?.purchase_units?.[0]?.payments?.captures?.[0]?.id;
+  }
+
+  private async sendCampaignRefund(campaignId: string) {
+    const campaign = await this.campaign(campaignId);
+    const reservation = await this.database.db.query.campaignReservations.findFirst({ where: eq(campaignReservations.campaignId, campaignId) });
+    const captureId = await this.fundingCapture(campaignId);
+    if (!reservation || !captureId) throw new ConflictException('This campaign has no PayPal payment to refund');
+    let update: Partial<typeof campaignReservations.$inferInsert>;
+    try {
+      const refund = await this.paypal.refundCapture({ captureId, amountMinor: reservation.releasedKobo, currency: campaign.currency, requestId: `campaign-close-${campaignId}`, note: `Unspent budget from ${campaign.title.slice(0, 100)}` });
+      update = refund.status === 'COMPLETED' ? { refundStatus: 'completed', refundReference: refund.id, refundError: null }
+        : refund.status === 'PENDING' ? { refundStatus: 'pending', refundReference: refund.id, refundError: null }
+        : { refundStatus: 'failed', refundReference: refund.id, refundError: `PayPal reported the refund as ${refund.status.toLowerCase()}` };
+    } catch (error) {
+      this.logger.warn(`PayPal refund failed for campaign ${campaignId}: ${error instanceof Error ? error.message : 'unknown error'}`);
+      update = { refundStatus: 'failed', refundError: 'PayPal could not complete the refund. Try again shortly.' };
+    }
+    await this.database.db.update(campaignReservations).set({ ...update, updatedAt: new Date() }).where(eq(campaignReservations.id, reservation.id));
+    if (update.refundStatus === 'completed') {
+      const business = await this.database.db.query.businesses.findFirst({ where: eq(businesses.id, campaign.businessId) });
+      if (business) await this.notify(business.ownerUserId, 'campaign_refunded', 'Refund sent', `${formatMinor(reservation.releasedKobo, campaign.currency)} of unspent budget from ${campaign.title} was refunded to your PayPal account.`, { campaignId });
+    }
+    return this.campaign(campaignId);
+  }
+
+  // What a business can see about delivery. Fraud signals and evidence files stay with admins.
+  private async campaignResults(campaign: typeof campaigns.$inferSelect) {
+    await this.releaseLapsedSlots(eq(campaignPromoters.campaignId, campaign.id));
+    const [reservation, slots, clicks, proofRows] = await Promise.all([
+      this.database.db.query.campaignReservations.findFirst({ where: eq(campaignReservations.campaignId, campaign.id) }),
+      this.database.db.select({ id: campaignPromoters.id, promoterId: campaignPromoters.promoterId, status: campaignPromoters.status, targetQuantity: campaignPromoters.targetQuantity, verifiedResults: campaignPromoters.verifiedResults, joinedAt: campaignPromoters.createdAt, username: promoters.username, displayName: users.displayName })
+        .from(campaignPromoters).innerJoin(promoters, eq(campaignPromoters.promoterId, promoters.id)).innerJoin(users, eq(promoters.userId, users.id))
+        .where(and(eq(campaignPromoters.campaignId, campaign.id), ne(campaignPromoters.status, 'removed'))).orderBy(asc(campaignPromoters.createdAt)),
+      this.database.db.select({ promoterId: trackingEvents.promoterId, total: sql<number>`count(*)::int` }).from(trackingEvents)
+        .where(and(eq(trackingEvents.campaignId, campaign.id), eq(trackingEvents.eventType, 'click'))).groupBy(trackingEvents.promoterId),
+      this.database.db.select({ proof: proofSubmissions, username: promoters.username, displayName: users.displayName })
+        .from(proofSubmissions).innerJoin(campaignPromoters, eq(proofSubmissions.assignmentId, campaignPromoters.id)).innerJoin(promoters, eq(proofSubmissions.promoterId, promoters.id)).innerJoin(users, eq(promoters.userId, users.id))
+        .where(eq(campaignPromoters.campaignId, campaign.id)).orderBy(desc(proofSubmissions.createdAt)),
+    ]);
+    const clicksByPromoter = new Map(clicks.map(row => [row.promoterId, Number(row.total)]));
+    const proofs = await this.withAiReviews(proofRows);
+    return {
+      fundedKobo: reservation?.amountKobo ?? 0,
+      spentKobo: reservation?.consumedKobo ?? 0,
+      remainingKobo: reservation ? reservation.amountKobo - reservation.consumedKobo - reservation.releasedKobo : 0,
+      refund: { status: reservation?.refundStatus ?? 'none', amountKobo: reservation?.releasedKobo ?? 0, destination: reservation?.refundDestination ?? null, reference: reservation?.refundReference ?? null, error: reservation?.refundError ?? null },
+      slotsTaken: slots.reduce((total, slot) => total + slot.targetQuantity, 0),
+      clicks: clicks.reduce((total, row) => total + Number(row.total), 0),
+      promoters: slots.map(({ promoterId, ...slot }) => ({ ...slot, clicks: clicksByPromoter.get(promoterId) ?? 0 })),
+      proofs: proofs.map(({ proof, username, displayName, aiReview }) => ({
+        id: proof.id, platform: proof.platform, status: proof.status, submittedUrl: proof.submittedUrl, createdAt: proof.createdAt, username, displayName,
+        ai: aiReview && { assurance: aiReview.assurance, contentMatch: aiReview.contentMatch },
+      })),
+    };
   }
 
   async businessCampaignApplications(user: AuthenticatedUser, campaignId: string) {
@@ -246,7 +364,7 @@ export class PlatformService {
     const filters = [sql`${campaigns.status}::text = ${status}`];
     if (query) filters.push(or(ilike(campaigns.title, `%${query}%`), ilike(businesses.name, `%${query}%`))!);
     const where = and(...filters);
-    const selection = { id: campaigns.id, title: campaigns.title, status: campaigns.status, objective: campaigns.objective, budgetKobo: campaigns.budgetKobo, createdAt: campaigns.createdAt, updatedAt: campaigns.updatedAt, businessName: businesses.name, businessStatus: businesses.verificationStatus };
+    const selection = { id: campaigns.id, title: campaigns.title, status: campaigns.status, objective: campaigns.objective, budgetKobo: campaigns.budgetKobo, currency: campaigns.currency, createdAt: campaigns.createdAt, updatedAt: campaigns.updatedAt, businessName: businesses.name, businessStatus: businesses.verificationStatus };
     const [items, counts] = await Promise.all([
       this.database.db.select(selection).from(campaigns).innerJoin(businesses, eq(campaigns.businessId, businesses.id)).where(where).orderBy(desc(campaigns.updatedAt)).limit(pageSize).offset((page - 1) * pageSize),
       this.database.db.select({ total: sql<number>`count(*)::int` }).from(campaigns).innerJoin(businesses, eq(campaigns.businessId, businesses.id)).where(where),
@@ -301,9 +419,20 @@ export class PlatformService {
     const payer = await this.database.db.query.users.findFirst({ where: eq(users.id, user.id) });
     if (!payer) throw new NotFoundException('Business owner not found');
     const reference = `reelch-${campaign.id}-${randomBytes(8).toString('hex')}`;
-    const initialized = await this.paystack.initialize({ email: payer.email, amount: campaign.budgetKobo, currency: campaign.currency, reference, campaignId, businessId: business.id });
+    const provider = this.providerFor(campaign.currency);
+    let initialized: { reference: string; authorization_url: string; access_code?: string; providerResponse: Record<string, unknown> };
+    if (provider === 'paypal') {
+      const returnUrl = new URL(`${process.env.FRONTEND_URL ?? 'http://localhost:3000'}/business/wallet`);
+      returnUrl.searchParams.set('campaignId', campaignId); returnUrl.searchParams.set('provider', 'paypal');
+      const cancelUrl = new URL(returnUrl); cancelUrl.searchParams.set('cancelled', '1');
+      const order = await this.paypal.createOrder({ reference, campaignId, title: campaign.title, amountMinor: campaign.budgetKobo, currency: campaign.currency, returnUrl: returnUrl.toString(), cancelUrl: cancelUrl.toString() });
+      initialized = { reference: order.orderId, authorization_url: order.approveUrl, providerResponse: { orderId: order.orderId, status: order.order.status, internalReference: reference } };
+    } else {
+      const paystack = await this.paystack.initialize({ email: payer.email, amount: campaign.budgetKobo, currency: campaign.currency, reference, campaignId, businessId: business.id });
+      initialized = { ...paystack, providerResponse: paystack };
+    }
     try {
-      await this.database.db.insert(paymentAttempts).values({ campaignId, businessId: business.id, reference: initialized.reference, accessCode: initialized.access_code, amountKobo: campaign.budgetKobo, currency: campaign.currency, providerResponse: initialized });
+      await this.database.db.insert(paymentAttempts).values({ campaignId, businessId: business.id, provider, reference: initialized.reference, accessCode: initialized.access_code, amountKobo: campaign.budgetKobo, currency: campaign.currency, providerResponse: initialized.providerResponse });
     } catch (cause) {
       this.logger.error(
         `Unable to save payment attempt for campaign ${campaignId}: ${this.databaseErrorDetails(cause)}`,
@@ -312,11 +441,11 @@ export class PlatformService {
       throw new ServiceUnavailableException('Payment could not be started. Please try again.');
     }
     try {
-      await this.audit(user, 'campaign.funding_initialized', 'campaign', campaignId, { reference: initialized.reference, amountKobo: campaign.budgetKobo });
+      await this.audit(user, 'campaign.funding_initialized', 'campaign', campaignId, { provider, reference: initialized.reference, amountKobo: campaign.budgetKobo });
     } catch (cause) {
       this.logger.error(`Unable to write funding audit for campaign ${campaignId}`, cause instanceof Error ? cause.stack : undefined);
     }
-    return { authorizationUrl: initialized.authorization_url, reference: initialized.reference, amountKobo: campaign.budgetKobo, currency: campaign.currency };
+    return { provider, authorizationUrl: initialized.authorization_url, reference: initialized.reference, amountKobo: campaign.budgetKobo, currency: campaign.currency };
   }
 
   async businessWallet(user: AuthenticatedUser) {
@@ -329,7 +458,7 @@ export class PlatformService {
         .from(ledgerEntries).innerJoin(ledgerTransactions, eq(ledgerEntries.transactionId, ledgerTransactions.id))
         .leftJoin(campaigns, sql`${ledgerTransactions.reference} = ${campaigns.id}::text`)
         .where(eq(ledgerEntries.walletId, wallet.id)).orderBy(desc(ledgerEntries.createdAt)).limit(50),
-      this.database.db.select({ id: paymentAttempts.id, amountKobo: paymentAttempts.amountKobo, createdAt: paymentAttempts.paidAt, updatedAt: paymentAttempts.updatedAt, reference: paymentAttempts.reference, providerResponse: paymentAttempts.providerResponse, campaignTitle: campaigns.title })
+      this.database.db.select({ id: paymentAttempts.id, provider: paymentAttempts.provider, currency: paymentAttempts.currency, amountKobo: paymentAttempts.amountKobo, createdAt: paymentAttempts.paidAt, updatedAt: paymentAttempts.updatedAt, reference: paymentAttempts.reference, providerResponse: paymentAttempts.providerResponse, campaignTitle: campaigns.title })
         .from(paymentAttempts).innerJoin(campaigns, eq(paymentAttempts.campaignId, campaigns.id))
         .where(and(eq(paymentAttempts.businessId, business.id), eq(paymentAttempts.status, 'success')))
         .orderBy(desc(paymentAttempts.paidAt)).limit(50),
@@ -345,6 +474,7 @@ export class PlatformService {
           id: entry.id,
           direction: entry.direction,
           amountKobo: entry.amountKobo,
+          currency: wallet.currency,
           createdAt: entry.createdAt,
           type: entry.type,
           reference: entry.reference,
@@ -360,16 +490,18 @@ export class PlatformService {
           id: payment.id,
           direction: 'debit' as const,
           amountKobo: payment.amountKobo,
+          currency: payment.currency,
           createdAt: payment.createdAt ?? payment.updatedAt,
           type: 'campaign_funding',
           reference: payment.reference,
           title: 'Campaign funded',
           description: payment.campaignTitle,
-          source: `Paystack ${channel}`,
+          source: payment.provider === 'paypal' ? 'PayPal' : `Paystack ${channel}`,
         };
       }),
     ].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()).slice(0, 50);
-    return { balanceKobo, currency: wallet.currency, account: account ? { accountName: account.accountName, accountNumber: account.accountNumber, bankName: account.bankName, bankSlug: account.bankSlug, currency: account.currency, isActive: account.isActive } : null, entries };
+    const { paymentProvider } = this.publicConfig();
+    return { balanceKobo, currency: wallet.currency, paymentProvider, campaignCurrency: this.platformCurrency(), account: account ? { accountName: account.accountName, accountNumber: account.accountNumber, bankName: account.bankName, bankSlug: account.bankSlug, currency: account.currency, isActive: account.isActive } : null, entries };
   }
 
   async createBusinessVirtualAccount(user: AuthenticatedUser) {
@@ -396,6 +528,7 @@ export class PlatformService {
     return this.database.db.transaction(async (tx) => {
       const businessWallet = await tx.query.wallets.findFirst({ where: and(eq(wallets.ownerType, 'business'), eq(wallets.ownerId, business.id)) });
       if (!businessWallet) throw new NotFoundException('Business wallet not found');
+      if (businessWallet.currency !== campaign.currency) throw new ConflictException(`Fund this ${campaign.currency} campaign with ${this.providerFor(campaign.currency) === 'paypal' ? 'PayPal' : 'Paystack'}`);
       const balances = await tx.select({ balance: sql<number>`coalesce(sum(case when ${ledgerEntries.direction} = 'credit' then ${ledgerEntries.amountKobo} else -${ledgerEntries.amountKobo} end), 0)::bigint` }).from(ledgerEntries).where(eq(ledgerEntries.walletId, businessWallet.id));
       if (Number(balances[0]?.balance ?? 0) < campaign.budgetKobo) throw new ConflictException('Your wallet balance is not enough to fund this campaign');
       const [created] = await tx.insert(wallets).values({ ownerType: 'campaign_reserve', ownerId: campaign.id }).onConflictDoNothing().returning();
@@ -446,7 +579,39 @@ export class PlatformService {
     const attempt = await this.database.db.query.paymentAttempts.findFirst({ where: and(eq(paymentAttempts.campaignId, campaignId), eq(paymentAttempts.reference, reference)) });
     if (!attempt) throw new NotFoundException('Payment attempt not found');
     if (attempt.status === 'success') return { campaignId, status: 'live', reference };
-    return this.finalizePaystackFunding(reference, await this.paystack.verify(reference), user.id);
+    const verified = attempt.provider === 'paypal' ? await this.paypal.captureOrder(reference) : this.fromPaystack(await this.paystack.verify(reference));
+    return this.finalizeFunding(reference, verified, user.id);
+  }
+
+  private fromPaystack(verified: PaystackVerification): FundingVerification {
+    return { reference: verified.reference, succeeded: verified.status === 'success', status: verified.status, amountMinor: Number(verified.amount), currency: verified.currency, paidAt: verified.paid_at ?? undefined, channel: verified.channel ?? 'card', raw: verified as unknown as Record<string, unknown> };
+  }
+
+  async processPaypalWebhook(event: { id?: string; event_type?: string; resource?: Record<string, unknown> }, payloadHash: string) {
+    if (!event.id || !event.event_type) return { received: true };
+    const receipt = await this.storeWebhookReceipt({ provider: 'paypal', externalId: event.id, eventType: event.event_type, payloadHash });
+    if (receipt?.status === 'processed') return { received: true };
+    const resource = event.resource ?? {};
+    try {
+      if (event.event_type === 'CHECKOUT.ORDER.APPROVED' || event.event_type === 'PAYMENT.CAPTURE.COMPLETED') {
+        const related = (resource.supplementary_data as { related_ids?: { order_id?: string } } | undefined)?.related_ids;
+        const orderId = event.event_type === 'CHECKOUT.ORDER.APPROVED' ? String(resource.id ?? '') : String(related?.order_id ?? '');
+        const attempt = orderId ? await this.database.db.query.paymentAttempts.findFirst({ where: and(eq(paymentAttempts.provider, 'paypal'), eq(paymentAttempts.reference, orderId)) }) : undefined;
+        if (attempt && attempt.status !== 'success') {
+          const business = await this.database.db.query.businesses.findFirst({ where: eq(businesses.id, attempt.businessId) });
+          if (business) await this.finalizeFunding(orderId, event.event_type === 'CHECKOUT.ORDER.APPROVED' ? await this.paypal.captureOrder(orderId) : await this.paypal.getOrder(orderId), business.ownerUserId);
+        }
+      } else if (event.event_type.startsWith('PAYMENT.PAYOUTS-ITEM.') || event.event_type.startsWith('PAYMENT.PAYOUTSBATCH.')) {
+        const batchId = String(resource.payout_batch_id ?? (resource.batch_header as { payout_batch_id?: string } | undefined)?.payout_batch_id ?? '');
+        const withdrawal = batchId ? await this.database.db.query.withdrawals.findFirst({ where: eq(withdrawals.providerReference, batchId) }) : undefined;
+        if (withdrawal) await this.syncPaypalPayout(withdrawal.id);
+      }
+      if (receipt) await this.database.db.update(inboundWebhookEvents).set({ status: 'processed', processedAt: new Date(), attempts: sql`${inboundWebhookEvents.attempts} + 1`, lastError: null }).where(eq(inboundWebhookEvents.id, receipt.id));
+    } catch (error) {
+      if (receipt) await this.database.db.update(inboundWebhookEvents).set({ status: 'failed', attempts: sql`${inboundWebhookEvents.attempts} + 1`, lastError: 'PayPal event processing failed; inspect API logs' }).where(eq(inboundWebhookEvents.id, receipt.id));
+      throw error;
+    }
+    return { received: true };
   }
 
   async processPaystackSuccess(reference: string) {
@@ -454,7 +619,7 @@ export class PlatformService {
     if (!attempt || attempt.status === 'success') return { received: true };
     const business = await this.database.db.query.businesses.findFirst({ where: eq(businesses.id, attempt.businessId) });
     if (!business) throw new NotFoundException('Business not found');
-    return this.finalizePaystackFunding(reference, await this.paystack.verify(reference), business.ownerUserId);
+    return this.finalizeFunding(reference, this.fromPaystack(await this.paystack.verify(reference)), business.ownerUserId);
   }
 
   async processPaystackCharge(reference: string) {
@@ -463,48 +628,46 @@ export class PlatformService {
     return this.processPaystackWalletDeposit(await this.paystack.verify(reference));
   }
 
-  private async finalizePaystackFunding(reference: string, verified: PaystackVerification, actorUserId: string) {
+  private async finalizeFunding(reference: string, verified: FundingVerification, actorUserId: string) {
     const attempt = await this.database.db.query.paymentAttempts.findFirst({ where: eq(paymentAttempts.reference, reference) });
     if (!attempt) throw new NotFoundException('Payment attempt not found');
     const campaign = await this.campaign(attempt.campaignId);
-    if (verified.reference !== reference || verified.status !== 'success' || Number(verified.amount) !== attempt.amountKobo || verified.currency !== attempt.currency) {
-      await this.database.db.update(paymentAttempts).set({ status: verified.status || 'failed', providerResponse: verified, updatedAt: new Date() }).where(eq(paymentAttempts.id, attempt.id));
+    if (verified.reference !== reference || !verified.succeeded || verified.amountMinor !== attempt.amountKobo || verified.currency !== attempt.currency) {
+      await this.database.db.update(paymentAttempts).set({ status: verified.status.toLowerCase() || 'failed', providerResponse: verified.raw, updatedAt: new Date() }).where(eq(paymentAttempts.id, attempt.id));
       throw new ConflictException('Payment has not been successfully verified for the required amount');
     }
     if (campaign.status === 'live') return { campaignId: campaign.id, status: 'live', reference };
     if (campaign.status !== 'funding_required') throw new ConflictException('Campaign is not ready for funding');
     return this.database.db.transaction(async (tx) => {
-      const idempotencyKey = `paystack:${reference}`;
+      const idempotencyKey = attempt.provider === 'paystack' ? `paystack:${reference}` : `${attempt.provider}:${reference}`;
       const existing = await tx.query.ledgerTransactions.findFirst({ where: eq(ledgerTransactions.idempotencyKey, idempotencyKey) });
       if (existing) return { campaignId: campaign.id, status: 'live', transactionId: existing.id, reference };
-      const [reserveWallet] = await tx.insert(wallets).values({ ownerType: 'campaign_reserve', ownerId: campaign.id }).onConflictDoNothing().returning();
-      const wallet = reserveWallet ?? await tx.query.wallets.findFirst({ where: and(eq(wallets.ownerType, 'campaign_reserve'), eq(wallets.ownerId, campaign.id)) });
-      if (!wallet) throw new Error('Unable to create campaign reserve wallet');
-      const [clearingWallet] = await tx.insert(wallets).values({ ownerType: 'payment_clearing', ownerId: campaign.businessId }).onConflictDoNothing().returning();
-      const clearing = clearingWallet ?? await tx.query.wallets.findFirst({ where: and(eq(wallets.ownerType, 'payment_clearing'), eq(wallets.ownerId, campaign.businessId)) });
-      if (!clearing) throw new Error('Unable to create payment clearing wallet');
-      const [transaction] = await tx.insert(ledgerTransactions).values({ type: 'campaign_funding', reference, idempotencyKey }).returning();
+      const wallet = await this.walletFor(tx, 'campaign_reserve', campaign.id, campaign.currency);
+      const clearing = await this.walletFor(tx, 'payment_clearing', campaign.businessId, campaign.currency);
+      const [transaction] = await tx.insert(ledgerTransactions).values({ type: 'campaign_funding', reference, idempotencyKey, metadata: { provider: attempt.provider, channel: verified.channel } }).returning();
       await tx.insert(ledgerEntries).values([
-        { transactionId: transaction.id, walletId: clearing.id, direction: 'debit', amountKobo: campaign.budgetKobo },
-        { transactionId: transaction.id, walletId: wallet.id, direction: 'credit', amountKobo: campaign.budgetKobo },
+        { transactionId: transaction.id, walletId: clearing.id, direction: 'debit', amountKobo: campaign.budgetKobo, currency: campaign.currency },
+        { transactionId: transaction.id, walletId: wallet.id, direction: 'credit', amountKobo: campaign.budgetKobo, currency: campaign.currency },
       ]);
       await tx.insert(campaignReservations).values({ campaignId: campaign.id, walletId: wallet.id, amountKobo: campaign.budgetKobo });
       await tx.update(campaigns).set({ status: 'live', updatedAt: new Date() }).where(eq(campaigns.id, campaign.id));
       await tx.insert(campaignStatusHistory).values({ campaignId: campaign.id, fromStatus: campaign.status, toStatus: 'live', actorUserId });
-      await tx.update(paymentAttempts).set({ status: 'success', paidAt: verified.paid_at ? new Date(verified.paid_at) : new Date(), providerResponse: verified, updatedAt: new Date() }).where(eq(paymentAttempts.id, attempt.id));
+      await tx.update(paymentAttempts).set({ status: 'success', paidAt: verified.paidAt ? new Date(verified.paidAt) : new Date(), providerResponse: verified.raw, updatedAt: new Date() }).where(eq(paymentAttempts.id, attempt.id));
       return { campaignId: campaign.id, status: 'live', transactionId: transaction.id, reference };
     });
   }
 
   async discoverCampaigns(user: AuthenticatedUser) {
     const promoter = await this.promoterFor(user.id);
+    await this.releaseLapsedSlots(eq(campaignPromoters.promoterId, promoter.id));
     const opportunities = await this.database.db.select({ campaign: campaigns, businessName: businesses.name, assignmentStatus: campaignPromoters.status })
       .from(campaigns).innerJoin(businesses, eq(campaigns.businessId, businesses.id))
       .leftJoin(campaignPromoters, and(eq(campaignPromoters.campaignId, campaigns.id), eq(campaignPromoters.promoterId, promoter.id)))
       .where(eq(campaigns.status, 'live')).orderBy(desc(campaigns.createdAt));
     const niches = new Set(promoter.niches.map(value => value.toLowerCase()));
     const location = promoter.city?.trim().toLowerCase();
-    return opportunities.filter(({ campaign }) => {
+    return opportunities.filter(({ campaign, assignmentStatus }) => {
+      if (assignmentStatus === 'removed') return false;
       const targeting = campaign.targeting as Record<string, unknown>;
       const category = typeof targeting.category === 'string' ? targeting.category.toLowerCase() : '';
       const targetLocation = typeof targeting.location === 'string' ? targeting.location.toLowerCase() : 'anywhere in nigeria';
@@ -519,21 +682,25 @@ export class PlatformService {
     const campaign = await this.campaign(campaignId);
     const business = await this.database.db.query.businesses.findFirst({ where: eq(businesses.id, campaign.businessId) });
     if (!business || campaign.status !== 'live') throw new NotFoundException('Live campaign not found');
+    await this.releaseLapsedSlots(eq(campaignPromoters.promoterId, promoter.id));
     const [assignment, referral, creatives] = await Promise.all([
       this.database.db.query.campaignPromoters.findFirst({ where: and(eq(campaignPromoters.campaignId, campaignId), eq(campaignPromoters.promoterId, promoter.id)) }),
       this.database.db.query.referralLinks.findFirst({ where: and(eq(referralLinks.campaignId, campaignId), eq(referralLinks.promoterId, promoter.id)) }),
       this.database.db.select().from(campaignCreatives).where(eq(campaignCreatives.campaignId, campaignId)).orderBy(asc(campaignCreatives.sortOrder)),
     ]);
-    return { campaign, businessName: business.name, assignment, referral, promoterVerificationStatus: promoter.verificationStatus, creatives: await Promise.all(creatives.map(async creative => ({ id: creative.id, filename: creative.originalFilename, mimeType: creative.mimeType, url: await this.storage.createReadUrl(creative.storageKey) }))) };
+    const submitBy = assignment ? (await this.firstProofDeadlines([assignment])).get(assignment.id) ?? null : null;
+    return { campaign, businessName: business.name, assignment, submitBy, referral, promoterVerificationStatus: promoter.verificationStatus, creatives: await Promise.all(creatives.map(async creative => ({ id: creative.id, filename: creative.originalFilename, mimeType: creative.mimeType, url: await this.storage.createReadUrl(creative.storageKey) }))) };
   }
 
   async joinCampaign(user: AuthenticatedUser, campaignId: string) {
     const promoter = await this.promoterFor(user.id);
     if (promoter.verificationStatus !== 'approved') throw new ForbiddenException('Your account must be verified before you can join campaigns');
+    await this.releaseLapsedSlots(eq(campaignPromoters.campaignId, campaignId));
     const result = await this.database.db.transaction(async (tx) => {
       const campaign = await tx.query.campaigns.findFirst({ where: eq(campaigns.id, campaignId) });
       if (!campaign || campaign.status !== 'live') throw new ConflictException('This campaign is no longer open');
       const existing = await tx.query.campaignPromoters.findFirst({ where: and(eq(campaignPromoters.campaignId, campaignId), eq(campaignPromoters.promoterId, promoter.id)) });
+      if (existing?.status === 'removed') throw new ConflictException('Your slot on this campaign was released and cannot be rejoined');
       if (existing) {
         const referral = await tx.query.referralLinks.findFirst({ where: and(eq(referralLinks.campaignId, campaignId), eq(referralLinks.promoterId, promoter.id)) });
         return { assignment: existing, referral, alreadyJoined: true };
@@ -543,16 +710,49 @@ export class PlatformService {
       const targetLocation = typeof targeting.location === 'string' ? targeting.location.toLowerCase() : 'anywhere in nigeria';
       if (category && !promoter.niches.some(niche => niche.toLowerCase() === category)) throw new ForbiddenException('This campaign does not match your profile category');
       if (targetLocation !== 'anywhere in nigeria' && promoter.city?.trim().toLowerCase() !== targetLocation) throw new ForbiddenException('This campaign is not available in your location');
-      const allocations = await tx.select({ total: sql<number>`coalesce(sum(${campaignPromoters.targetQuantity}), 0)::int` }).from(campaignPromoters).where(eq(campaignPromoters.campaignId, campaignId));
+      const allocations = await tx.select({ total: sql<number>`coalesce(sum(${campaignPromoters.targetQuantity}), 0)::int` }).from(campaignPromoters).where(and(eq(campaignPromoters.campaignId, campaignId), ne(campaignPromoters.status, 'removed')));
       if (Number(allocations[0]?.total ?? 0) >= campaign.targetQuantity) throw new ConflictException('All available campaign slots have been taken');
       const destinationUrl = String(targeting.destinationUrl ?? '');
       const [assignment] = await tx.insert(campaignPromoters).values({ campaignId, promoterId: promoter.id, targetQuantity: 1, termsVersion: campaign.termsVersion, status: 'accepted' }).returning();
       const [referral] = await tx.insert(referralLinks).values({ campaignId, promoterId: promoter.id, destinationUrl, code: randomBytes(12).toString('base64url') }).returning();
-      await tx.insert(notifications).values({ userId: promoter.userId, type: 'campaign_joined', title: 'Campaign joined', body: `You can now start promoting ${campaign.title}.`, data: { campaignId, assignmentId: assignment.id } });
-      return { assignment, referral, alreadyJoined: false };
+      await tx.insert(notifications).values({ userId: promoter.userId, type: 'campaign_joined', title: 'Campaign joined', body: `You can now start promoting ${campaign.title}. Submit your first proof within ${FIRST_PROOF_WINDOW_HOURS} hours to keep your slot.`, data: { campaignId, assignmentId: assignment.id } });
+      return { assignment, referral, alreadyJoined: false, submitBy: firstProofDeadline(assignment.createdAt) };
     }, { isolationLevel: 'serializable' });
     await this.audit(user, 'campaign.joined', 'campaign', campaignId, { assignmentId: result.assignment.id });
     return result;
+  }
+
+  // Releases slots whose latest proof was rejected and not replaced within the resubmit window,
+  // and slots whose promoter never submitted a proof within the first-proof window.
+  // Runs whenever a slot's state is read, so it does not depend on a scheduled job.
+  // Promoters with verified results keep their allocation, because those results are already paid for.
+  private async releaseLapsedSlots(scope: SQL) {
+    const hoursAgo = (hours: number) => new Date(Date.now() - hours * 3_600_000).toISOString();
+    const release = (lapsed: SQL) => this.database.db.update(campaignPromoters).set({ status: 'removed', updatedAt: new Date() }).where(and(
+      scope, inArray(campaignPromoters.status, ['accepted', 'active']), eq(campaignPromoters.verifiedResults, 0), lapsed,
+      sql`exists (select 1 from campaigns c where c.id = campaign_promoters.campaign_id and c.status = 'live')`,
+    )).returning();
+    const rejected = await release(sql`(select p.status = 'rejected' and p.reviewed_at < ${hoursAgo(RESUBMIT_WINDOW_HOURS)}::timestamptz from proof_submissions p where p.assignment_id = campaign_promoters.id order by p.created_at desc limit 1)`);
+    const idle = await release(sql`not exists (select 1 from proof_submissions p where p.assignment_id = campaign_promoters.id) and campaign_promoters.created_at < ${hoursAgo(FIRST_PROOF_WINDOW_HOURS)}::timestamptz`);
+    const released = [
+      ...rejected.map(slot => ({ slot, reason: 'resubmit_window', body: `Your ${RESUBMIT_WINDOW_HOURS} hours to resubmit ended, so your slot was released for another promoter.` })),
+      ...idle.map(slot => ({ slot, reason: 'first_proof_window', body: `No proof was submitted within ${FIRST_PROOF_WINDOW_HOURS} hours of joining, so your slot was released for another promoter.` })),
+    ];
+    for (const { slot, reason, body } of released) {
+      await this.database.db.update(referralLinks).set({ isActive: false }).where(and(eq(referralLinks.campaignId, slot.campaignId), eq(referralLinks.promoterId, slot.promoterId)));
+      const promoter = await this.database.db.query.promoters.findFirst({ where: eq(promoters.id, slot.promoterId) });
+      if (promoter) await this.notify(promoter.userId, 'campaign_slot_released', 'Campaign slot released', body, { campaignId: slot.campaignId, assignmentId: slot.id });
+      await this.systemAudit(null, 'assignment.slot_released', 'campaign_promoter', slot.id, { campaignId: slot.campaignId, reason });
+    }
+  }
+
+  // The first-proof deadline only applies until a promoter has submitted something.
+  private async firstProofDeadlines(rows: Array<typeof campaignPromoters.$inferSelect>) {
+    const open = rows.filter(row => ['accepted', 'active'].includes(row.status) && row.verifiedResults === 0);
+    if (!open.length) return new Map<string, Date>();
+    const submitted = await this.database.db.selectDistinct({ assignmentId: proofSubmissions.assignmentId }).from(proofSubmissions).where(inArray(proofSubmissions.assignmentId, open.map(row => row.id)));
+    const hasProof = new Set(submitted.map(row => row.assignmentId));
+    return new Map(open.filter(row => !hasProof.has(row.id)).map(row => [row.id, firstProofDeadline(row.createdAt)]));
   }
 
   async apply(user: AuthenticatedUser, campaignId: string, _message?: string) {
@@ -576,7 +776,8 @@ export class PlatformService {
     const application = await this.database.db.query.promoterApplications.findFirst({ where: and(eq(promoterApplications.id, applicationId), eq(promoterApplications.campaignId, campaignId)) });
     if (!application || application.status !== 'applied') throw new NotFoundException('Active application not found');
     if (!Number.isInteger(targetQuantity) || targetQuantity < 1) throw new BadRequestException('A positive target is required');
-    const allocations = await this.database.db.select({ total: sql<number>`coalesce(sum(${campaignPromoters.targetQuantity}), 0)::int` }).from(campaignPromoters).where(eq(campaignPromoters.campaignId, campaignId));
+    await this.releaseLapsedSlots(eq(campaignPromoters.campaignId, campaignId));
+    const allocations = await this.database.db.select({ total: sql<number>`coalesce(sum(${campaignPromoters.targetQuantity}), 0)::int` }).from(campaignPromoters).where(and(eq(campaignPromoters.campaignId, campaignId), ne(campaignPromoters.status, 'removed')));
     const remaining = campaign.targetQuantity - Number(allocations[0]?.total ?? 0);
     if (targetQuantity > remaining) throw new ConflictException(`Only ${Math.max(0, remaining)} campaign results remain unallocated`);
     const destinationUrl = String((campaign.targeting as Record<string, unknown>).destinationUrl ?? '');
@@ -641,6 +842,7 @@ export class PlatformService {
 
   async promoterWorkspace(user: AuthenticatedUser) {
     const promoter = await this.promoterFor(user.id);
+    await this.releaseLapsedSlots(eq(campaignPromoters.promoterId, promoter.id));
     const assignments = await this.database.db.select({ assignment: campaignPromoters, campaign: campaigns, businessName: businesses.name, referralCode: referralLinks.code, destinationUrl: referralLinks.destinationUrl })
       .from(campaignPromoters).innerJoin(campaigns, eq(campaignPromoters.campaignId, campaigns.id)).innerJoin(businesses, eq(campaigns.businessId, businesses.id))
       .leftJoin(referralLinks, and(eq(referralLinks.campaignId, campaigns.id), eq(referralLinks.promoterId, promoter.id)))
@@ -648,10 +850,49 @@ export class PlatformService {
     const applications = await this.database.db.select({ application: promoterApplications, campaign: campaigns, businessName: businesses.name })
       .from(promoterApplications).innerJoin(campaigns, eq(promoterApplications.campaignId, campaigns.id)).innerJoin(businesses, eq(campaigns.businessId, businesses.id))
       .where(eq(promoterApplications.promoterId, promoter.id)).orderBy(desc(promoterApplications.updatedAt));
-    const entries = await this.database.db.select({ direction: ledgerEntries.direction, amountKobo: ledgerEntries.amountKobo, createdAt: ledgerEntries.createdAt }).from(ledgerEntries).innerJoin(wallets, eq(ledgerEntries.walletId, wallets.id)).where(and(eq(wallets.ownerType, 'promoter'), eq(wallets.ownerId, promoter.id))).orderBy(desc(ledgerEntries.createdAt));
-    const availableKobo = entries.reduce((sum, entry) => sum + (entry.direction === 'credit' ? entry.amountKobo : -entry.amountKobo), 0);
-    return { promoter, assignments, applications, earnings: { availableKobo, currency: 'NGN', entries } };
+    const deadlines = await this.firstProofDeadlines(assignments.map(row => row.assignment));
+    return { promoter, assignments: assignments.map(row => ({ ...row, submitBy: deadlines.get(row.assignment.id) ?? null })), applications, earnings: await this.promoterBalance(promoter.id, this.platformCurrency()) };
   }
+
+  private async promoterBalance(promoterId: string, currency: string) {
+    const entries = await this.database.db.select({ direction: ledgerEntries.direction, amountKobo: ledgerEntries.amountKobo, createdAt: ledgerEntries.createdAt, type: ledgerTransactions.type, reference: ledgerTransactions.reference })
+      .from(ledgerEntries).innerJoin(wallets, eq(ledgerEntries.walletId, wallets.id)).innerJoin(ledgerTransactions, eq(ledgerEntries.transactionId, ledgerTransactions.id))
+      .where(and(eq(wallets.ownerType, 'promoter'), eq(wallets.ownerId, promoterId), eq(wallets.currency, currency))).orderBy(desc(ledgerEntries.createdAt));
+    const availableKobo = entries.reduce((sum, entry) => sum + (entry.direction === 'credit' ? entry.amountKobo : -entry.amountKobo), 0);
+    return { availableKobo, currency, entries };
+  }
+
+  async promoterEarnings(user: AuthenticatedUser) {
+    const promoter = await this.promoterFor(user.id);
+    const currency = this.platformCurrency();
+    // Without a public webhook URL (local demos), refresh in-flight PayPal payouts on read.
+    const pending = await this.database.db.select({ id: withdrawals.id }).from(withdrawals).where(and(eq(withdrawals.promoterId, promoter.id), eq(withdrawals.status, 'processing'), sql`${withdrawals.providerReference} is not null`)).limit(5);
+    await Promise.all(pending.map(row => this.syncPaypalPayout(row.id).catch(() => undefined)));
+    const [balance, account, history] = await Promise.all([
+      this.promoterBalance(promoter.id, currency),
+      this.database.db.query.payoutAccounts.findFirst({ where: and(eq(payoutAccounts.promoterId, promoter.id), eq(payoutAccounts.provider, 'paypal'), eq(payoutAccounts.isDefault, true)) }),
+      this.database.db.select().from(withdrawals).where(eq(withdrawals.promoterId, promoter.id)).orderBy(desc(withdrawals.createdAt)).limit(50),
+    ]);
+    return { ...balance, paymentProvider: this.providerFor(currency), minimumWithdrawalKobo: this.minimumWithdrawal(currency), payoutAccount: account ? { id: account.id, provider: account.provider, email: account.providerRecipientCode } : null, withdrawals: history };
+  }
+
+  async setPaypalPayoutAccount(user: AuthenticatedUser, input: { email: string }) {
+    const promoter = await this.promoterFor(user.id);
+    const email = input.email?.trim().toLowerCase();
+    if (!email || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new BadRequestException('Enter the email address of your PayPal account');
+    const account = await this.database.db.transaction(async (tx) => {
+      await tx.update(payoutAccounts).set({ isDefault: false, updatedAt: new Date() }).where(and(eq(payoutAccounts.promoterId, promoter.id), eq(payoutAccounts.provider, 'paypal')));
+      const existing = await tx.query.payoutAccounts.findFirst({ where: and(eq(payoutAccounts.provider, 'paypal'), eq(payoutAccounts.providerRecipientCode, email)) });
+      if (existing && existing.promoterId !== promoter.id) throw new ConflictException('This PayPal email is linked to another promoter');
+      if (existing) { const [updated] = await tx.update(payoutAccounts).set({ isDefault: true, updatedAt: new Date() }).where(eq(payoutAccounts.id, existing.id)).returning(); return updated; }
+      const [created] = await tx.insert(payoutAccounts).values({ promoterId: promoter.id, provider: 'paypal', bankCode: 'paypal', accountLast4: '', accountName: email, providerRecipientCode: email }).returning();
+      return created;
+    });
+    await this.audit(user, 'payout_account.paypal_linked', 'payout_account', account.id);
+    return { id: account.id, provider: 'paypal', email };
+  }
+
+  private minimumWithdrawal(currency: string) { return currency === 'NGN' ? 100_000 : Number(process.env.PAYPAL_MIN_PAYOUT_MINOR ?? 100); }
 
   async flagConversion(user: AuthenticatedUser, conversionId: string, rule: string, riskScore: number) {
     if (!rule || !Number.isInteger(riskScore) || riskScore < 0 || riskScore > 100) throw new BadRequestException('Rule and risk score from 0 to 100 are required');
@@ -671,60 +912,105 @@ export class PlatformService {
   }
 
   async requestWithdrawal(user: AuthenticatedUser, input: { payoutAccountId: string; amountKobo: number }, idempotencyKey: string) {
-    if (!idempotencyKey || !Number.isInteger(input.amountKobo) || input.amountKobo < 100_000) {
-      throw new BadRequestException('Idempotency-Key and a withdrawal of at least ₦1,000 are required');
+    const currency = this.platformCurrency();
+    const minimum = this.minimumWithdrawal(currency);
+    if (!idempotencyKey || !Number.isInteger(input.amountKobo) || input.amountKobo < minimum) {
+      throw new BadRequestException(`Idempotency-Key and a withdrawal of at least ${(minimum / 100).toFixed(2)} ${currency} are required`);
     }
     const promoter = await this.promoterFor(user.id);
+    const withdrawal = await this.holdWithdrawal(promoter.id, input.payoutAccountId, input.amountKobo, currency, idempotencyKey);
+    const account = await this.database.db.query.payoutAccounts.findFirst({ where: eq(payoutAccounts.id, withdrawal.payoutAccountId) });
+    // PayPal withdrawals settle immediately; other rails wait for an administrator.
+    if (account?.provider === 'paypal' && withdrawal.status === 'requested') return this.sendPaypalPayout(withdrawal.id, user.id);
+    return withdrawal;
+  }
+
+  private holdWithdrawal(promoterId: string, payoutAccountId: string, amountKobo: number, currency: string, idempotencyKey: string) {
     return this.database.db.transaction(async (tx) => {
       const existing = await tx.query.withdrawals.findFirst({ where: eq(withdrawals.idempotencyKey, idempotencyKey) });
       if (existing) return existing;
-      const account = await tx.query.payoutAccounts.findFirst({ where: and(eq(payoutAccounts.id, input.payoutAccountId), eq(payoutAccounts.promoterId, promoter.id)) });
+      const account = await tx.query.payoutAccounts.findFirst({ where: and(eq(payoutAccounts.id, payoutAccountId), eq(payoutAccounts.promoterId, promoterId)) });
       if (!account) throw new NotFoundException('Payout account not found');
-      const promoterWallet = await tx.query.wallets.findFirst({ where: and(eq(wallets.ownerType, 'promoter'), eq(wallets.ownerId, promoter.id)) });
+      const promoterWallet = await tx.query.wallets.findFirst({ where: and(eq(wallets.ownerType, 'promoter'), eq(wallets.ownerId, promoterId), eq(wallets.currency, currency)) });
       if (!promoterWallet) throw new NotFoundException('Promoter wallet not found');
       const balanceRows = await tx.select({ balance: sql<number>`coalesce(sum(case when ${ledgerEntries.direction} = 'credit' then ${ledgerEntries.amountKobo} else -${ledgerEntries.amountKobo} end), 0)::bigint` }).from(ledgerEntries).where(eq(ledgerEntries.walletId, promoterWallet.id));
       const balance = Number(balanceRows[0]?.balance ?? 0);
-      if (balance < input.amountKobo) throw new ConflictException('Insufficient available earnings');
-      const [clearingCreated] = await tx.insert(wallets).values({ ownerType: 'payout_clearing', ownerId: promoter.id }).onConflictDoNothing().returning();
-      const clearing = clearingCreated ?? await tx.query.wallets.findFirst({ where: and(eq(wallets.ownerType, 'payout_clearing'), eq(wallets.ownerId, promoter.id)) });
-      if (!clearing) throw new Error('Unable to create payout clearing wallet');
+      if (balance < amountKobo) throw new ConflictException('Insufficient available earnings');
+      const clearing = await this.walletFor(tx, 'payout_clearing', promoterId, currency);
       const feeKobo = 0;
-      const [withdrawal] = await tx.insert(withdrawals).values({ promoterId: promoter.id, payoutAccountId: account.id, amountKobo: input.amountKobo, feeKobo, netAmountKobo: input.amountKobo - feeKobo, idempotencyKey }).returning();
+      const [withdrawal] = await tx.insert(withdrawals).values({ promoterId, payoutAccountId: account.id, amountKobo, feeKobo, netAmountKobo: amountKobo - feeKobo, currency, idempotencyKey }).returning();
       const [transaction] = await tx.insert(ledgerTransactions).values({ type: 'withdrawal_hold', reference: withdrawal.id, idempotencyKey: `withdrawal-hold:${withdrawal.id}` }).returning();
       await tx.insert(ledgerEntries).values([
-        { transactionId: transaction.id, walletId: promoterWallet.id, direction: 'debit', amountKobo: input.amountKobo },
-        { transactionId: transaction.id, walletId: clearing.id, direction: 'credit', amountKobo: input.amountKobo },
+        { transactionId: transaction.id, walletId: promoterWallet.id, direction: 'debit', amountKobo, currency },
+        { transactionId: transaction.id, walletId: clearing.id, direction: 'credit', amountKobo, currency },
       ]);
       return withdrawal;
     }, { isolationLevel: 'serializable' });
   }
 
+  async sendPaypalPayout(withdrawalId: string, actorUserId: string | null) {
+    const [claimed] = await this.database.db.update(withdrawals).set({ status: 'processing', processedBy: actorUserId, updatedAt: new Date() })
+      .where(and(eq(withdrawals.id, withdrawalId), inArray(withdrawals.status, ['requested', 'reviewing']))).returning();
+    if (!claimed) throw new ConflictException('Withdrawal is not awaiting payout');
+    const account = await this.database.db.query.payoutAccounts.findFirst({ where: eq(payoutAccounts.id, claimed.payoutAccountId) });
+    if (account?.provider !== 'paypal') throw new ConflictException('Withdrawal is not linked to a PayPal account');
+    try {
+      // The withdrawal id is the sender_batch_id, so PayPal rejects accidental duplicates.
+      const batchId = await this.paypal.createPayout({ senderBatchId: claimed.id, receiver: account.providerRecipientCode, amountMinor: claimed.netAmountKobo, currency: claimed.currency, note: 'Your verified Reelch campaign earnings' });
+      const [updated] = await this.database.db.update(withdrawals).set({ providerReference: batchId, updatedAt: new Date() }).where(eq(withdrawals.id, claimed.id)).returning();
+      await this.systemAudit(actorUserId, 'withdrawal.paypal_payout_sent', 'withdrawal', claimed.id, { batchId });
+      return updated;
+    } catch (error) {
+      // Leave it reviewable rather than reversing: the payout may still have reached PayPal.
+      await this.database.db.update(withdrawals).set({ status: 'reviewing', failureReason: error instanceof Error ? error.message.slice(0, 300) : 'PayPal payout failed', updatedAt: new Date() }).where(eq(withdrawals.id, claimed.id));
+      throw error;
+    }
+  }
+
+  async syncPaypalPayout(withdrawalId: string) {
+    const withdrawal = await this.database.db.query.withdrawals.findFirst({ where: eq(withdrawals.id, withdrawalId) });
+    if (!withdrawal?.providerReference) throw new NotFoundException('PayPal payout not found');
+    if (withdrawal.status !== 'processing') return withdrawal;
+    const batch = await this.paypal.getPayout(withdrawal.providerReference);
+    const item = batch.items?.[0];
+    const status = item?.transaction_status ?? batch.batch_header.batch_status;
+    if (status === 'SUCCESS') return this.settleWithdrawal(null, withdrawal.id, { outcome: 'paid', providerReference: item?.transaction_id ?? withdrawal.providerReference });
+    if (['FAILED', 'RETURNED', 'BLOCKED', 'REFUNDED', 'REVERSED', 'DENIED'].includes(status)) {
+      return this.settleWithdrawal(null, withdrawal.id, { outcome: 'failed', providerReference: withdrawal.providerReference, reason: item?.errors?.message ?? `PayPal reported ${status.toLowerCase()}` });
+    }
+    return withdrawal;
+  }
+
   async processWithdrawal(user: AuthenticatedUser, withdrawalId: string, input: { outcome: 'paid' | 'failed'; providerReference?: string; reason?: string }) {
     if (input.outcome === 'paid' && !input.providerReference) throw new BadRequestException('Provider reference is required');
     if (input.outcome === 'failed' && !input.reason) throw new BadRequestException('Failure reason is required');
+    return this.settleWithdrawal(user.id, withdrawalId, input);
+  }
+
+  private async settleWithdrawal(actorUserId: string | null, withdrawalId: string, input: { outcome: 'paid' | 'failed'; providerReference?: string; reason?: string }) {
     const result = await this.database.db.transaction(async (tx) => {
       const [withdrawal] = await tx.update(withdrawals).set({
         status: input.outcome,
         providerReference: input.providerReference,
         failureReason: input.reason,
-        processedBy: user.id,
+        processedBy: actorUserId,
         processedAt: new Date(),
         updatedAt: new Date(),
       }).where(and(eq(withdrawals.id, withdrawalId), inArray(withdrawals.status, ['requested', 'reviewing', 'processing']))).returning();
       if (!withdrawal) throw new ConflictException('Withdrawal has already been processed');
       if (input.outcome === 'failed') {
-        const promoterWallet = await tx.query.wallets.findFirst({ where: and(eq(wallets.ownerType, 'promoter'), eq(wallets.ownerId, withdrawal.promoterId)) });
-        const clearing = await tx.query.wallets.findFirst({ where: and(eq(wallets.ownerType, 'payout_clearing'), eq(wallets.ownerId, withdrawal.promoterId)) });
+        const promoterWallet = await tx.query.wallets.findFirst({ where: and(eq(wallets.ownerType, 'promoter'), eq(wallets.ownerId, withdrawal.promoterId), eq(wallets.currency, withdrawal.currency)) });
+        const clearing = await tx.query.wallets.findFirst({ where: and(eq(wallets.ownerType, 'payout_clearing'), eq(wallets.ownerId, withdrawal.promoterId), eq(wallets.currency, withdrawal.currency)) });
         if (!promoterWallet || !clearing) throw new Error('Withdrawal wallets not found');
         const [reversal] = await tx.insert(ledgerTransactions).values({ type: 'withdrawal_reversal', reference: withdrawal.id, idempotencyKey: `withdrawal-reversal:${withdrawal.id}` }).returning();
         await tx.insert(ledgerEntries).values([
-          { transactionId: reversal.id, walletId: clearing.id, direction: 'debit', amountKobo: withdrawal.amountKobo },
-          { transactionId: reversal.id, walletId: promoterWallet.id, direction: 'credit', amountKobo: withdrawal.amountKobo },
+          { transactionId: reversal.id, walletId: clearing.id, direction: 'debit', amountKobo: withdrawal.amountKobo, currency: withdrawal.currency },
+          { transactionId: reversal.id, walletId: promoterWallet.id, direction: 'credit', amountKobo: withdrawal.amountKobo, currency: withdrawal.currency },
         ]);
       }
       return withdrawal;
     }, { isolationLevel: 'serializable' });
-    await this.audit(user, `withdrawal.${input.outcome}`, 'withdrawal', result.id, { providerReference: input.providerReference, reason: input.reason });
+    await this.systemAudit(actorUserId, `withdrawal.${input.outcome}`, 'withdrawal', result.id, { providerReference: input.providerReference, reason: input.reason });
     const promoter = await this.database.db.query.promoters.findFirst({ where: eq(promoters.id, result.promoterId) });
     if (promoter) await this.notify(promoter.userId, 'withdrawal_updated', `Withdrawal ${input.outcome}`, input.outcome === 'paid' ? 'Your withdrawal has been processed.' : `Your withdrawal could not be processed: ${input.reason}`, { withdrawalId, outcome: input.outcome });
     return result;
@@ -759,14 +1045,20 @@ export class PlatformService {
     const promoter = await this.promoterFor(user.id);
     const assignment = await this.database.db.query.campaignPromoters.findFirst({ where: and(eq(campaignPromoters.id, assignmentId), eq(campaignPromoters.promoterId, promoter.id)) });
     if (!assignment) throw new NotFoundException('Campaign assignment not found');
+    await this.releaseLapsedSlots(eq(campaignPromoters.id, assignmentId));
+    const current = await this.database.db.query.campaignPromoters.findFirst({ where: eq(campaignPromoters.id, assignmentId) });
+    if (current?.status === 'removed') throw new ConflictException('Your time to submit proof ended and this slot was released');
     return this.storage.createProofUpload(user.id, assignmentId, input);
   }
 
   async submitProof(user: AuthenticatedUser, assignmentId: string, input: { platform: string; submittedUrl?: string; storageKey?: string; filename?: string; contentType?: string; sizeBytes?: number; claimedViews?: number }) {
     const promoter = await this.promoterFor(user.id);
+    await this.releaseLapsedSlots(and(eq(campaignPromoters.id, assignmentId), eq(campaignPromoters.promoterId, promoter.id))!);
     const assignment = await this.database.db.query.campaignPromoters.findFirst({ where: and(eq(campaignPromoters.id, assignmentId), eq(campaignPromoters.promoterId, promoter.id)) });
+    if (assignment?.status === 'removed') throw new ConflictException('Your time to submit proof ended and this slot was released');
     if (!assignment || !['accepted', 'active'].includes(assignment.status)) throw new NotFoundException('Active campaign assignment not found');
     const campaign = await this.campaign(assignment.campaignId); const targeting = campaign.targeting as Record<string, unknown>;
+    if (['completed', 'cancelled'].includes(campaign.status)) throw new ConflictException('This campaign has ended and is no longer accepting proof');
     const allowed = Array.isArray(targeting.platforms) ? targeting.platforms.map(String).map(value => value.toLowerCase()) : ['x', 'tiktok', 'instagram', 'whatsapp'];
     const platform = input.platform?.trim().toLowerCase(); if (!allowed.includes(platform)) throw new BadRequestException('This platform is not allowed for the campaign');
     if (input.claimedViews !== undefined && (!Number.isInteger(input.claimedViews) || input.claimedViews < 0)) throw new BadRequestException('Claimed views must be a positive whole number');
@@ -776,7 +1068,7 @@ export class PlatformService {
     const connectedProfile = await this.database.db.query.socialAccounts.findFirst({ where: and(eq(socialAccounts.promoterId, promoter.id), eq(socialAccounts.platform, platform)) });
     const expectedHandle = connectedProfile?.handle.replace(/^@/, '').replace(/^https?:\/\/[^/]+\/@?/, '').split(/[/?#]/)[0].toLowerCase();
     const returnedHandle = String(verification.checks.username ?? verification.checks.authorHandle ?? verification.externalAuthorId ?? '').replace(/^@/, '').toLowerCase();
-    const ownershipMatches = verification.method === 'manual' ? undefined : Boolean(expectedHandle && returnedHandle && expectedHandle === returnedHandle);
+    const ownershipMatches = verification.method === 'manual' || !expectedHandle ? undefined : Boolean(returnedHandle && expectedHandle === returnedHandle);
     const requiredHashtag = typeof targeting.requiredHashtag === 'string' ? targeting.requiredHashtag.trim().toLowerCase() : '';
     const providerText = String(verification.checks.text ?? verification.checks.description ?? '').toLowerCase();
     const hashtagMatches = !requiredHashtag || !providerText || providerText.includes(requiredHashtag);
@@ -786,21 +1078,169 @@ export class PlatformService {
     const [proof] = await this.database.db.insert(proofSubmissions).values({ assignmentId, promoterId: promoter.id, platform, storageKey: input.storageKey, submittedUrl: input.submittedUrl, externalPostId: verification.externalPostId, externalAuthorId: verification.externalAuthorId, verificationMethod: verification.method, automatedChecks, claimedViews: input.claimedViews, status: verification.method === 'platform_api' && hashtagMatches && viewsMeetMinimum ? 'under_review' : 'submitted' }).returning();
     if (verification.metrics) await this.database.db.insert(proofMetricSnapshots).values({ proofSubmissionId: proof.id, views: verification.metrics.views, likes: verification.metrics.likes, comments: verification.metrics.comments, shares: verification.metrics.shares, rawResponseHash: this.hash(JSON.stringify(verification)) });
     await this.audit(user, 'proof.submitted', 'proof_submission', proof.id, { platform, method: verification.method });
+    // The proof is already saved: a queue or AI failure must not fail the submission.
+    const queued = this.jobs.enabled && await this.jobs.enqueueProofReview(proof.id).then(() => true, error => { this.logger.error(`Could not queue AI review for proof ${proof.id}`, error instanceof Error ? error.stack : undefined); return false; });
+    if (!queued) await this.runProofAiReview(proof.id).catch(error => this.logger.error(`AI review failed for proof ${proof.id}`, error instanceof Error ? error.stack : undefined));
     return proof;
+  }
+
+  async runProofAiReview(proofId: string) {
+    const proof = await this.database.db.query.proofSubmissions.findFirst({ where: eq(proofSubmissions.id, proofId) });
+    if (!proof || !['submitted', 'under_review'].includes(proof.status)) return null;
+    const assignment = await this.database.db.query.campaignPromoters.findFirst({ where: eq(campaignPromoters.id, proof.assignmentId) });
+    if (!assignment) throw new NotFoundException('Campaign assignment not found');
+    const campaign = await this.campaign(assignment.campaignId);
+    const targeting = campaign.targeting as Record<string, unknown>;
+    const checks = proof.automatedChecks as Record<string, unknown>;
+
+    let evidence: { data: Buffer; contentType: string } | undefined;
+    let duplicateEvidence = false;
+    let fingerprint: string | undefined;
+    if (proof.storageKey) {
+      evidence = await this.storage.readObject(proof.storageKey);
+      const evidenceHash = this.hash(evidence.data.toString('base64'));
+      await this.database.db.update(proofSubmissions).set({ evidenceHash, updatedAt: new Date() }).where(eq(proofSubmissions.id, proof.id));
+      const reused = await this.database.db.query.proofSubmissions.findFirst({ where: and(eq(proofSubmissions.evidenceHash, evidenceHash), sql`${proofSubmissions.id} <> ${proof.id}`) });
+      duplicateEvidence = Boolean(reused);
+      if (evidence.contentType.startsWith('image/')) {
+        fingerprint = await imageFingerprint(evidence.data).catch((error: unknown) => {
+          this.logger.warn(`Could not fingerprint evidence for proof ${proof.id}: ${error instanceof Error ? error.message : 'unknown error'}`);
+          return undefined;
+        });
+        if (fingerprint) await this.database.db.update(proofSubmissions).set({ evidenceFingerprint: fingerprint }).where(eq(proofSubmissions.id, proof.id));
+      }
+    }
+
+    let assessment: AiProofAssessment | null = null;
+    let failure: string | undefined;
+    let meta = { provider: 'none', model: 'none', latencyMs: 0 };
+    try {
+      const response = await this.ai.generateJson({
+        system: proofReviewSystemPrompt, schemaName: 'proof_assessment', schema: proofAssessmentSchema,
+        parts: [
+          { type: 'text', text: proofReviewPrompt({
+            title: campaign.title, description: campaign.description, platform: proof.platform,
+            requiredHashtag: typeof targeting.requiredHashtag === 'string' ? targeting.requiredHashtag : undefined,
+            minimumViews: Number(targeting.minimumViews ?? 0) || undefined,
+            destinationUrl: typeof targeting.destinationUrl === 'string' ? targeting.destinationUrl : undefined,
+            expectedHandle: typeof checks.expectedHandle === 'string' ? checks.expectedHandle : undefined,
+            claimedViews: proof.claimedViews ?? undefined, submittedUrl: proof.submittedUrl ?? undefined,
+            platformData: { method: proof.verificationMethod, author: checks.username ?? checks.authorHandle, caption: checks.text ?? checks.description },
+          }, Boolean(evidence)) },
+          ...(evidence ? [{ type: 'file' as const, mimeType: evidence.contentType, data: evidence.data }] : []),
+        ],
+      });
+      assessment = sanitizeAssessment(response.data);
+      meta = { provider: response.provider, model: response.model, latencyMs: response.latencyMs };
+    } catch (error) {
+      // The proof stays in the human review queue when the model is unavailable.
+      failure = error instanceof AiOutputError || error instanceof ServiceUnavailableException ? error.message : 'AI review failed unexpectedly';
+      this.logger.warn(`AI review unavailable for proof ${proof.id}: ${failure}`);
+    }
+
+    const nearDuplicateEvidence = Boolean(!duplicateEvidence && fingerprint && assessment && await this.hasNearDuplicate(proof.id, assignment.campaignId, fingerprint, assessment));
+    const platformViews = (await this.database.db.query.proofMetricSnapshots.findFirst({ where: eq(proofMetricSnapshots.proofSubmissionId, proof.id), orderBy: desc(proofMetricSnapshots.capturedAt) }))?.views ?? undefined;
+    const outcome = decideProof({
+      assessment, verificationMethod: proof.verificationMethod,
+      ownershipMatches: typeof checks.ownershipMatches === 'boolean' ? checks.ownershipMatches : undefined,
+      hashtagMatches: typeof checks.hashtagMatches === 'boolean' ? checks.hashtagMatches : undefined,
+      minimumViews: Number(targeting.minimumViews ?? 0), platformViews: platformViews ?? undefined, claimedViews: proof.claimedViews ?? undefined, duplicateEvidence, nearDuplicateEvidence,
+      settings: {
+        autoApprove: process.env.AI_AUTO_APPROVE !== 'false',
+        minimumScore: Number(process.env.AI_AUTO_APPROVE_MIN_SCORE ?? 85),
+        allowEvidenceOnly: process.env.AI_AUTO_APPROVE_EVIDENCE_ONLY === 'true',
+      },
+    });
+    const [review] = await this.database.db.insert(proofAiReviews).values({
+      proofSubmissionId: proof.id, ...meta, status: assessment ? 'completed' : 'failed', decision: outcome.decision, assurance: outcome.assurance,
+      contentMatch: assessment?.contentMatch, fraudRisk: outcome.fraudRisk, assessment, reasons: outcome.reasons, error: failure,
+    }).returning();
+    if (outcome.fraudRisk !== 'low') {
+      await this.database.db.insert(fraudFlags).values({ promoterId: proof.promoterId, rule: duplicateEvidence || nearDuplicateEvidence ? 'duplicate_proof_evidence' : 'ai_proof_review', riskScore: riskScore[outcome.fraudRisk], details: { proofId: proof.id, reviewId: review.id, reasons: outcome.reasons, signals: assessment?.fraudSignals ?? [] } });
+    }
+    await this.systemAudit(null, 'proof.ai_reviewed', 'proof_submission', proof.id, { reviewId: review.id, decision: outcome.decision, model: meta.model });
+
+    if (outcome.decision === 'auto_approve') {
+      let approved = false;
+      try {
+        await this.decideProofReview(null, proof.id, { decision: 'approved', reason: `Automatically approved by AI verification (${outcome.assurance.replace('_', ' ')})` });
+        approved = true;
+      } catch (error) {
+        // Funding or allocation limits can still block approval; leave it for a reviewer.
+        this.logger.warn(`Automatic approval skipped for proof ${proof.id}: ${error instanceof Error ? error.message : 'unknown error'}`);
+        await this.database.db.update(proofSubmissions).set({ status: 'under_review', updatedAt: new Date() }).where(and(eq(proofSubmissions.id, proof.id), eq(proofSubmissions.status, 'submitted')));
+      }
+      // Earnings are already credited; a failed payout stays reviewable on the withdrawal.
+      if (approved) await this.autoPayout(proof.promoterId, campaign.unitPriceKobo, campaign.currency, proof.id).catch(error => this.logger.warn(`Automatic PayPal payout failed for proof ${proof.id}: ${error instanceof Error ? error.message : 'unknown error'}`));
+    } else if (proof.status === 'submitted') {
+      await this.database.db.update(proofSubmissions).set({ status: 'under_review', updatedAt: new Date() }).where(and(eq(proofSubmissions.id, proof.id), eq(proofSubmissions.status, 'submitted')));
+    }
+    return review;
+  }
+
+  // Promoters share a creative, so this stays within one campaign, where a copied screenshot earns money.
+  private async hasNearDuplicate(proofId: string, campaignId: string, fingerprint: string, assessment: AiProofAssessment) {
+    const others = await this.withAiReviews(await this.database.db.select({ proof: { id: proofSubmissions.id, fingerprint: proofSubmissions.evidenceFingerprint } })
+      .from(proofSubmissions).innerJoin(campaignPromoters, eq(proofSubmissions.assignmentId, campaignPromoters.id))
+      .where(and(eq(campaignPromoters.campaignId, campaignId), ne(proofSubmissions.id, proofId), sql`${proofSubmissions.evidenceFingerprint} is not null`)));
+    const current = { fingerprint, views: assessment.extracted.views, handle: assessment.extracted.handle };
+    return others.some(({ proof, aiReview }) => {
+      const extracted = (aiReview?.assessment as AiProofAssessment | null)?.extracted;
+      return extracted && proof.fingerprint && isNearDuplicate(current, { fingerprint: proof.fingerprint, views: extracted.views, handle: extracted.handle });
+    });
+  }
+
+  private async autoPayout(promoterId: string, amountKobo: number, currency: string, proofId: string) {
+    if (this.providerFor(currency) !== 'paypal' || process.env.PAYPAL_AUTO_PAYOUT === 'false') return;
+    const promoter = await this.database.db.query.promoters.findFirst({ where: eq(promoters.id, promoterId) });
+    const account = await this.database.db.query.payoutAccounts.findFirst({ where: and(eq(payoutAccounts.promoterId, promoterId), eq(payoutAccounts.provider, 'paypal'), eq(payoutAccounts.isDefault, true)) });
+    if (!account) {
+      if (promoter) await this.notify(promoter.userId, 'payout_account_required', 'Add your PayPal email', 'Your earnings are ready. Add a PayPal email under Earnings to receive automatic payouts.', { proofId });
+      return;
+    }
+    const withdrawal = await this.holdWithdrawal(promoterId, account.id, amountKobo, currency, `auto-proof:${proofId}`);
+    if (withdrawal.status !== 'requested') return;
+    await this.sendPaypalPayout(withdrawal.id, null);
+    if (this.jobs.enabled) await this.jobs.enqueuePayoutSync(withdrawal.id).catch(error => this.logger.warn(`Could not queue payout sync for ${withdrawal.id}: ${error instanceof Error ? error.message : 'unknown error'}`));
   }
 
   async promoterProofs(user: AuthenticatedUser) {
     const promoter = await this.promoterFor(user.id);
-    return this.database.db.select({ proof: proofSubmissions, campaignTitle: campaigns.title, businessName: businesses.name })
+    await this.releaseLapsedSlots(eq(campaignPromoters.promoterId, promoter.id));
+    const rows = await this.database.db.select({ proof: proofSubmissions, campaignTitle: campaigns.title, businessName: businesses.name, slotStatus: campaignPromoters.status, verifiedResults: campaignPromoters.verifiedResults })
       .from(proofSubmissions).innerJoin(campaignPromoters, eq(proofSubmissions.assignmentId, campaignPromoters.id)).innerJoin(campaigns, eq(campaignPromoters.campaignId, campaigns.id)).innerJoin(businesses, eq(campaigns.businessId, businesses.id))
       .where(eq(proofSubmissions.promoterId, promoter.id)).orderBy(desc(proofSubmissions.createdAt));
+    // Rows are newest first, so only the first proof seen per slot can still be resubmitted.
+    const seen = new Set<string>();
+    const withDeadline = rows.map(({ verifiedResults, ...row }) => {
+      const isLatest = !seen.has(row.proof.assignmentId); seen.add(row.proof.assignmentId);
+      const canResubmit = isLatest && row.proof.status === 'rejected' && row.proof.reviewedAt && verifiedResults === 0 && row.slotStatus !== 'removed';
+      return { ...row, resubmitBy: canResubmit && row.proof.reviewedAt ? resubmitDeadline(row.proof.reviewedAt) : null };
+    });
+    // Promoters see the outcome and reasons, not fraud scoring details.
+    return (await this.withAiReviews(withDeadline)).map(row => ({ ...row, aiReview: row.aiReview && { decision: row.aiReview.decision, assurance: row.aiReview.assurance, contentMatch: row.aiReview.contentMatch, summary: row.aiReview.assessment?.summary, reasons: row.aiReview.reasons, createdAt: row.aiReview.createdAt } }));
+  }
+
+  private async withAiReviews<T extends { proof: { id: string } }>(rows: T[]) {
+    const ids = rows.map(row => row.proof.id);
+    const reviews = ids.length ? await this.database.db.select().from(proofAiReviews).where(inArray(proofAiReviews.proofSubmissionId, ids)).orderBy(desc(proofAiReviews.createdAt)) : [];
+    const latest = new Map<string, typeof proofAiReviews.$inferSelect>();
+    for (const review of reviews) if (!latest.has(review.proofSubmissionId)) latest.set(review.proofSubmissionId, review);
+    return rows.map(row => ({ ...row, aiReview: latest.get(row.proof.id) ?? null }));
+  }
+
+  async rerunProofAiReview(user: AuthenticatedUser, proofId: string) {
+    const review = await this.runProofAiReview(proofId);
+    if (!review) throw new ConflictException('Only proofs awaiting review can be re-checked');
+    await this.audit(user, 'proof.ai_review_requested', 'proof_submission', proofId);
+    return review;
   }
 
   async adminProofs(status = 'submitted') {
     const validStatus = ['submitted', 'under_review', 'approved', 'rejected'].includes(status) ? status as typeof proofSubmissions.$inferSelect.status : 'submitted';
-    return this.database.db.select({ proof: proofSubmissions, campaignTitle: campaigns.title, promoterUsername: promoters.username, promoterName: users.displayName })
+    return this.withAiReviews(await this.database.db.select({ proof: proofSubmissions, campaignTitle: campaigns.title, promoterUsername: promoters.username, promoterName: users.displayName })
       .from(proofSubmissions).innerJoin(campaignPromoters, eq(proofSubmissions.assignmentId, campaignPromoters.id)).innerJoin(campaigns, eq(campaignPromoters.campaignId, campaigns.id)).innerJoin(promoters, eq(proofSubmissions.promoterId, promoters.id)).innerJoin(users, eq(promoters.userId, users.id))
-      .where(eq(proofSubmissions.status, validStatus)).orderBy(asc(proofSubmissions.createdAt));
+      .where(eq(proofSubmissions.status, validStatus)).orderBy(asc(proofSubmissions.createdAt)));
   }
 
   async proofEvidenceUrl(user: AuthenticatedUser, proofId: string) {
@@ -812,6 +1252,16 @@ export class PlatformService {
 
   async reviewProof(user: AuthenticatedUser, proofId: string, input: { decision: 'approved' | 'rejected'; reason?: string }) {
     if (input.decision === 'rejected' && !input.reason) throw new BadRequestException('A rejection reason is required');
+    const proof = await this.decideProofReview(user.id, proofId, input);
+    if (input.decision === 'approved') {
+      const assignment = await this.database.db.query.campaignPromoters.findFirst({ where: eq(campaignPromoters.id, proof.assignmentId) });
+      const campaign = assignment ? await this.campaign(assignment.campaignId) : undefined;
+      if (campaign) await this.autoPayout(proof.promoterId, campaign.unitPriceKobo, campaign.currency, proof.id).catch(error => this.logger.warn(`Payout after manual approval failed for proof ${proof.id}: ${error instanceof Error ? error.message : 'unknown error'}`));
+    }
+    return proof;
+  }
+
+  private async decideProofReview(actorUserId: string | null, proofId: string, input: { decision: 'approved' | 'rejected'; reason?: string }) {
     const proof = await this.database.db.transaction(async (tx) => {
       const current = await tx.query.proofSubmissions.findFirst({ where: and(eq(proofSubmissions.id, proofId), inArray(proofSubmissions.status, ['submitted', 'under_review'])) });
       if (!current) throw new NotFoundException('Reviewable proof not found');
@@ -826,17 +1276,25 @@ export class PlatformService {
         const minimumViews = Number((campaign.targeting as Record<string, unknown>).minimumViews ?? 0); if (minimumViews && Number(current.claimedViews ?? 0) < minimumViews && current.verificationMethod === 'manual') throw new ConflictException(`At least ${minimumViews.toLocaleString()} views are required`);
         const [claimed] = await tx.update(campaignReservations).set({ consumedKobo: sql`${campaignReservations.consumedKobo} + ${campaign.unitPriceKobo}`, updatedAt: new Date() }).where(and(eq(campaignReservations.id, reservation.id), sql`${campaignReservations.amountKobo} - ${campaignReservations.consumedKobo} - ${campaignReservations.releasedKobo} >= ${campaign.unitPriceKobo}`)).returning();
         if (!claimed) throw new ConflictException('The campaign has no remaining reserved funds');
-        const wallet = await tx.query.wallets.findFirst({ where: and(eq(wallets.ownerType, 'promoter'), eq(wallets.ownerId, current.promoterId)) }); if (!wallet) throw new Error('Promoter wallet not found');
+        const wallet = await this.walletFor(tx, 'promoter', current.promoterId, campaign.currency);
         const [ledger] = await tx.insert(ledgerTransactions).values({ type: 'proof_earning', reference: current.id, idempotencyKey: `proof:${current.id}` }).returning();
-        await tx.insert(ledgerEntries).values([{ transactionId: ledger.id, walletId: reservation.walletId, direction: 'debit', amountKobo: campaign.unitPriceKobo }, { transactionId: ledger.id, walletId: wallet.id, direction: 'credit', amountKobo: campaign.unitPriceKobo }]);
+        await tx.insert(ledgerEntries).values([{ transactionId: ledger.id, walletId: reservation.walletId, direction: 'debit', amountKobo: campaign.unitPriceKobo, currency: campaign.currency }, { transactionId: ledger.id, walletId: wallet.id, direction: 'credit', amountKobo: campaign.unitPriceKobo, currency: campaign.currency }]);
         await tx.update(campaignPromoters).set({ verifiedResults: sql`${campaignPromoters.verifiedResults} + 1`, status: 'active', updatedAt: new Date() }).where(eq(campaignPromoters.id, assignment.id));
         await tx.update(campaigns).set({ verifiedQuantity: sql`${campaigns.verifiedQuantity} + 1`, updatedAt: new Date() }).where(eq(campaigns.id, campaign.id));
+        if (claimed.consumedKobo + claimed.releasedKobo >= claimed.amountKobo) {
+          const business = await tx.query.businesses.findFirst({ where: eq(businesses.id, campaign.businessId) });
+          if (business) {
+            await tx.update(campaigns).set({ status: 'completed', updatedAt: new Date() }).where(eq(campaigns.id, campaign.id));
+            await tx.insert(campaignStatusHistory).values({ campaignId: campaign.id, fromStatus: 'live', toStatus: 'completed', actorUserId: actorUserId ?? business.ownerUserId, reason: 'Budget fully spent on verified posts' });
+            await tx.insert(notifications).values({ userId: business.ownerUserId, type: 'campaign_completed', title: 'Campaign completed', body: `${campaign.title} has delivered all its verified posts.`, data: { campaignId: campaign.id } });
+          }
+        }
       }
-      const [updated] = await tx.update(proofSubmissions).set({ status: input.decision, reviewReason: input.reason, reviewedBy: user.id, reviewedAt: new Date(), updatedAt: new Date() }).where(eq(proofSubmissions.id, current.id)).returning(); return updated;
+      const [updated] = await tx.update(proofSubmissions).set({ status: input.decision, reviewReason: input.reason, reviewedBy: actorUserId, reviewedAt: new Date(), updatedAt: new Date() }).where(eq(proofSubmissions.id, current.id)).returning(); return updated;
     }, { isolationLevel: 'serializable' });
-    await this.audit(user, `proof.${input.decision}`, 'proof_submission', proof.id, { reason: input.reason });
+    await this.systemAudit(actorUserId, `proof.${input.decision}`, 'proof_submission', proof.id, { reason: input.reason });
     const promoter = await this.database.db.query.promoters.findFirst({ where: eq(promoters.id, proof.promoterId) });
-    if (promoter) await this.notify(promoter.userId, 'proof_reviewed', `Proof ${input.decision}`, input.decision === 'approved' ? 'Your campaign proof was approved.' : `Your campaign proof was rejected: ${input.reason}`, { proofId, decision: input.decision });
+    if (promoter) await this.notify(promoter.userId, 'proof_reviewed', `Proof ${input.decision}`, input.decision === 'approved' ? 'Your campaign proof was approved.' : `Your campaign proof was rejected: ${input.reason?.replace(/\.?$/, '.')} Submit a new proof within ${RESUBMIT_WINDOW_HOURS} hours to keep your slot.`, { proofId, decision: input.decision });
     return proof;
   }
 
@@ -848,6 +1306,38 @@ export class PlatformService {
     const [notification] = await this.database.db.update(notifications).set({ readAt: new Date() }).where(and(eq(notifications.id, id), eq(notifications.userId, user.id))).returning();
     if (!notification) throw new NotFoundException('Notification not found');
     return notification;
+  }
+
+  async adminWithdrawals() {
+    return this.database.db.select({
+      id: withdrawals.id, amountKobo: withdrawals.amountKobo, netAmountKobo: withdrawals.netAmountKobo, currency: withdrawals.currency, status: withdrawals.status,
+      idempotencyKey: withdrawals.idempotencyKey, providerReference: withdrawals.providerReference, failureReason: withdrawals.failureReason, createdAt: withdrawals.createdAt, processedAt: withdrawals.processedAt,
+      provider: payoutAccounts.provider, destination: payoutAccounts.accountName, username: promoters.username, displayName: users.displayName,
+    }).from(withdrawals).innerJoin(payoutAccounts, eq(withdrawals.payoutAccountId, payoutAccounts.id)).innerJoin(promoters, eq(withdrawals.promoterId, promoters.id)).innerJoin(users, eq(promoters.userId, users.id))
+      .orderBy(desc(withdrawals.createdAt)).limit(1000);
+  }
+
+  async adminLedger() {
+    const transactions = await this.database.db.select().from(ledgerTransactions).orderBy(desc(ledgerTransactions.createdAt)).limit(1000);
+    const entries = transactions.length ? await this.database.db.select({ transactionId: ledgerEntries.transactionId, direction: ledgerEntries.direction, amountKobo: ledgerEntries.amountKobo, ownerType: wallets.ownerType, currency: wallets.currency })
+      .from(ledgerEntries).innerJoin(wallets, eq(ledgerEntries.walletId, wallets.id)).where(inArray(ledgerEntries.transactionId, transactions.map(row => row.id))) : [];
+    const signedAmount = sql`case when ${ledgerEntries.direction} = 'credit' then ${ledgerEntries.amountKobo} else -${ledgerEntries.amountKobo} end`;
+    // Totals read every entry, so they stay correct when the transaction list is capped.
+    const [accounts, unbalanced] = await Promise.all([
+      this.database.db.select({ ownerType: wallets.ownerType, currency: wallets.currency, netKobo: sql<number>`coalesce(sum(${signedAmount}), 0)::bigint` })
+        .from(ledgerEntries).innerJoin(wallets, eq(ledgerEntries.walletId, wallets.id)).groupBy(wallets.ownerType, wallets.currency),
+      this.database.db.execute(sql`select count(*)::int as total from (select transaction_id from ledger_entries group by transaction_id having sum(case when direction = 'credit' then amount_kobo else -amount_kobo end) <> 0) as lopsided`),
+    ]);
+    return {
+      accounts: accounts.map(row => ({ ...row, netKobo: Number(row.netKobo) })),
+      unbalancedTransactions: Number((unbalanced.rows[0] as { total?: number } | undefined)?.total ?? 0),
+      transactions: transactions.map(transaction => {
+        const legs = entries.filter(entry => entry.transactionId === transaction.id);
+        const total = (direction: 'debit' | 'credit') => legs.filter(leg => leg.direction === direction).reduce((sum, leg) => sum + leg.amountKobo, 0);
+        const accountsOn = (direction: 'debit' | 'credit') => [...new Set(legs.filter(leg => leg.direction === direction).map(leg => leg.ownerType))];
+        return { id: transaction.id, createdAt: transaction.createdAt, type: transaction.type, reference: transaction.reference, status: transaction.status, currency: legs[0]?.currency ?? 'USD', amountKobo: total('credit'), from: accountsOn('debit'), to: accountsOn('credit'), balanced: total('credit') === total('debit') };
+      }),
+    };
   }
 
   async adminOverview() {
@@ -935,7 +1425,17 @@ export class PlatformService {
     return updated;
   }
   private audit(user: AuthenticatedUser, action: string, resourceType: string, resourceId?: string, metadata: Record<string, unknown> = {}) {
-    return this.database.db.insert(auditLogs).values({ actorUserId: user.id, action, resourceType, resourceId, metadata });
+    return this.systemAudit(user.id, action, resourceType, resourceId, metadata);
+  }
+  // A null actor marks a decision made by Reelch automation rather than a person.
+  private systemAudit(actorUserId: string | null, action: string, resourceType: string, resourceId?: string, metadata: Record<string, unknown> = {}) {
+    return this.database.db.insert(auditLogs).values({ actorUserId, action, resourceType, resourceId, metadata });
+  }
+  private async walletFor(tx: Parameters<Parameters<DatabaseService['db']['transaction']>[0]>[0], ownerType: string, ownerId: string, currency: string) {
+    const [created] = await tx.insert(wallets).values({ ownerType, ownerId, currency }).onConflictDoNothing().returning();
+    const wallet = created ?? await tx.query.wallets.findFirst({ where: and(eq(wallets.ownerType, ownerType), eq(wallets.ownerId, ownerId), eq(wallets.currency, currency)) });
+    if (!wallet) throw new Error(`Unable to create ${ownerType} wallet`);
+    return wallet;
   }
   private notify(userId: string, type: string, title: string, body: string, data: Record<string, unknown> = {}) {
     return this.database.db.insert(notifications).values({ userId, type, title, body, data });

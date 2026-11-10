@@ -13,6 +13,15 @@ export class JobHandlersService {
       ON CONFLICT (id) DO NOTHING`, [userId, userId]);
   }
 
+  async proofReview(proofId: string) {
+    await this.platform.runProofAiReview(proofId);
+  }
+
+  async payoutSync(withdrawalId: string) {
+    const withdrawal = await this.platform.syncPaypalPayout(withdrawalId);
+    if (withdrawal.status === 'processing') throw new Error('PayPal payout is still pending');
+  }
+
   async paystack(reference: string, receiptId: string) {
     await this.database.executeSql('UPDATE inbound_webhook_events SET attempts=attempts+1 WHERE id=$1', [receiptId]);
     try {

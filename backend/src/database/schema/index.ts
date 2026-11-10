@@ -225,7 +225,8 @@ export const ledgerEntries = pgTable('ledger_entries', {
 export const campaignReservations = pgTable('campaign_reservations', {
   id: uuid('id').primaryKey().defaultRandom(), campaignId: uuid('campaign_id').notNull().references(() => campaigns.id),
   walletId: uuid('wallet_id').notNull().references(() => wallets.id), amountKobo: bigint('amount_kobo', { mode: 'number' }).notNull(),
-  consumedKobo: bigint('consumed_kobo', { mode: 'number' }).notNull().default(0), releasedKobo: bigint('released_kobo', { mode: 'number' }).notNull().default(0), ...timestamps,
+  consumedKobo: bigint('consumed_kobo', { mode: 'number' }).notNull().default(0), releasedKobo: bigint('released_kobo', { mode: 'number' }).notNull().default(0),
+  refundStatus: text('refund_status').notNull().default('none'), refundDestination: text('refund_destination'), refundReference: text('refund_reference'), refundError: text('refund_error'), ...timestamps,
 }, (t) => [uniqueIndex('campaign_reservation_unique').on(t.campaignId)]);
 
 export const paymentAttempts = pgTable('payment_attempts', {
@@ -346,9 +347,18 @@ export const proofSubmissions = pgTable('proof_submissions', {
   promoterId: uuid('promoter_id').notNull().references(() => promoters.id), platform: text('platform').notNull(), storageKey: text('storage_key'),
   submittedUrl: text('submitted_url'), externalPostId: text('external_post_id'), externalAuthorId: text('external_author_id'),
   verificationMethod: text('verification_method').notNull().default('manual'), automatedChecks: jsonb('automated_checks').$type<Record<string, unknown>>().notNull().default({}),
-  claimedViews: integer('claimed_views'), status: proofStatusEnum('status').notNull().default('submitted'),
+  claimedViews: integer('claimed_views'), status: proofStatusEnum('status').notNull().default('submitted'), evidenceHash: text('evidence_hash'), evidenceFingerprint: text('evidence_fingerprint'),
   reviewedBy: uuid('reviewed_by').references(() => users.id), reviewReason: text('review_reason'), reviewedAt: timestamp('reviewed_at', { withTimezone: true }), ...timestamps,
-}, (t) => [index('proof_status_created_idx').on(t.status, t.createdAt), uniqueIndex('proof_platform_post_unique').on(t.platform, t.externalPostId)]);
+}, (t) => [index('proof_status_created_idx').on(t.status, t.createdAt), uniqueIndex('proof_platform_post_unique').on(t.platform, t.externalPostId), index('proof_evidence_hash_idx').on(t.evidenceHash)]);
+
+export const proofAiReviews = pgTable('proof_ai_reviews', {
+  id: uuid('id').primaryKey().defaultRandom(), proofSubmissionId: uuid('proof_submission_id').notNull().references(() => proofSubmissions.id, { onDelete: 'cascade' }),
+  provider: text('provider').notNull(), model: text('model').notNull(), status: text('status').notNull(),
+  decision: text('decision').notNull(), assurance: text('assurance').notNull(), contentMatch: integer('content_match'), fraudRisk: text('fraud_risk').notNull(),
+  assessment: jsonb('assessment').$type<import('../../platform/proof-review.js').AiProofAssessment | null>(),
+  reasons: jsonb('reasons').$type<string[]>().notNull().default([]), error: text('error'), latencyMs: integer('latency_ms'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [index('proof_ai_reviews_proof_created_idx').on(t.proofSubmissionId, t.createdAt)]);
 
 export const proofMetricSnapshots = pgTable('proof_metric_snapshots', {
   id: uuid('id').primaryKey().defaultRandom(), proofSubmissionId: uuid('proof_submission_id').notNull().references(() => proofSubmissions.id, { onDelete: 'cascade' }),
