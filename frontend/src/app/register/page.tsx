@@ -125,7 +125,7 @@ export default function RegisterPage() {
               {role === "business" ? "Business name" : "Username"}
               <span className="mt-2 flex items-center gap-3 rounded-xl border border-black/12 bg-white px-4 focus-within:border-[#6558ff] focus-within:ring-4 focus-within:ring-[#6558ff]/10">
                 {role === "business" ? <Building2 className="size-4 text-black/35" /> : <UserRound className="size-4 text-black/35" />}
-                <input name="profileName" required className="min-h-12 w-full bg-transparent py-3 text-sm outline-none" placeholder={role === "business" ? "Your organization" : "Choose a username"} />
+                <input name="profileName" required {...(role === "promoter" ? { pattern: "[A-Za-z0-9_.\\-]{1,60}", title: "Use letters, numbers, dots, underscores or hyphens. No spaces." } : {})} className="min-h-12 w-full bg-transparent py-3 text-sm outline-none" placeholder={role === "business" ? "Your organization" : "Choose a username"} />
               </span>
             </label>
 

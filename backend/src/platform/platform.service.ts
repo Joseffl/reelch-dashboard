@@ -161,7 +161,7 @@ export class PlatformService {
     if (business.verificationStatus !== 'approved') throw new ForbiddenException('Business verification is required');
     const [campaign] = await this.database.db.insert(campaigns).values({
       businessId: business.id, title: input.title.trim(), description: input.description.trim(), currency: this.platformCurrency(),
-      conversionType: input.conversionType?.trim() || 'visibility',
+      conversionType: input.conversionType?.trim() || 'visibility', objective: 'visibility',
       unitPriceKobo: input.unitPriceKobo, targetQuantity: input.targetQuantity,
       budgetKobo: input.unitPriceKobo * input.targetQuantity,
       targeting: { ...input.targeting, country: 'Nigeria', objective: 'visibility', destinationUrl: input.destinationUrl },
@@ -364,7 +364,7 @@ export class PlatformService {
     const filters = [sql`${campaigns.status}::text = ${status}`];
     if (query) filters.push(or(ilike(campaigns.title, `%${query}%`), ilike(businesses.name, `%${query}%`))!);
     const where = and(...filters);
-    const selection = { id: campaigns.id, title: campaigns.title, status: campaigns.status, objective: campaigns.objective, budgetKobo: campaigns.budgetKobo, currency: campaigns.currency, createdAt: campaigns.createdAt, updatedAt: campaigns.updatedAt, businessName: businesses.name, businessStatus: businesses.verificationStatus };
+    const selection = { id: campaigns.id, title: campaigns.title, status: campaigns.status, objective: sql<string>`coalesce(${campaigns.targeting}->>'objective', ${campaigns.objective})`, budgetKobo: campaigns.budgetKobo, currency: campaigns.currency, createdAt: campaigns.createdAt, updatedAt: campaigns.updatedAt, businessName: businesses.name, businessStatus: businesses.verificationStatus };
     const [items, counts] = await Promise.all([
       this.database.db.select(selection).from(campaigns).innerJoin(businesses, eq(campaigns.businessId, businesses.id)).where(where).orderBy(desc(campaigns.updatedAt)).limit(pageSize).offset((page - 1) * pageSize),
       this.database.db.select({ total: sql<number>`count(*)::int` }).from(campaigns).innerJoin(businesses, eq(campaigns.businessId, businesses.id)).where(where),
