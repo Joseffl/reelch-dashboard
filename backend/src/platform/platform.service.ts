@@ -211,7 +211,7 @@ export class PlatformService {
     const latestViews = new Map<string, number | null>(); for (const snapshot of snapshots) if (!latestViews.has(snapshot.proofSubmissionId)) latestViews.set(snapshot.proofSubmissionId, snapshot.views);
     const reviewed = await this.withAiReviews(proofRows);
     const analytics = summarizeAnalytics(
-      rows.map(({ campaign, reservation }) => ({ id: campaign.id, title: campaign.title, status: campaign.status, currency: campaign.currency, unitPriceKobo: campaign.unitPriceKobo, targetQuantity: campaign.targetQuantity, fundedKobo: reservation?.amountKobo ?? 0, spentKobo: reservation?.consumedKobo ?? 0, createdAt: campaign.createdAt })),
+      rows.map(({ campaign, reservation }) => ({ id: campaign.id, title: campaign.title, status: campaign.status, currency: campaign.currency, unitPriceKobo: campaign.unitPriceKobo, targetQuantity: campaign.targetQuantity, fundedKobo: reservation?.amountKobo ?? 0, spentKobo: reservation?.consumedKobo ?? 0, refundedKobo: reservation?.releasedKobo ?? 0, createdAt: campaign.createdAt })),
       reviewed.map(({ proof, campaignId, aiReview }) => ({ campaignId, platform: proof.platform, status: proof.status, createdAt: proof.createdAt, claimedViews: proof.claimedViews, aiViews: aiReview?.assessment?.extracted?.views ?? null, metricViews: latestViews.get(proof.id) ?? null, aiDecision: aiReview?.decision ?? null, fraudRisk: aiReview?.fraudRisk ?? null })),
     );
     return { analytics: { ...analytics, currency }, campaigns: rows.map(row => row.campaign) };
