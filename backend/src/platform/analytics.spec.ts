@@ -33,6 +33,10 @@ describe('business analytics', () => {
     expect(result.totals).toMatchObject({ campaigns: 2, liveCampaigns: 1, approvedPosts: 4, pendingPosts: 1, rejectedPosts: 1, views: 13000, spentKobo: 7500 });
     expect(result.totals.costPerThousandViewsKobo).toBe(577);
   });
+  it('splits the budget into paid, refunded and still in escrow', () => {
+    const budget = summarizeAnalytics([campaign('a', 5000), campaign('b', 2500, { status: 'completed', refundedKobo: 47500 })], [], now).totals;
+    expect(budget).toMatchObject({ fundedKobo: 100000, spentKobo: 7500, refundedKobo: 47500, escrowKobo: 45000 });
+  });
   it('splits views by platform, largest first', () => {
     expect(result.byPlatform.map(entry => [entry.label, entry.views, entry.posts])).toEqual([['TikTok', 10000, 2], ['X', 2000, 1], ['Instagram', 1000, 1]]);
     expect(result.byPlatform[0].share).toBeCloseTo(10000 / 13000);

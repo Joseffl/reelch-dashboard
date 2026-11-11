@@ -10,7 +10,7 @@ const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000/api/v1"
 
 type Analytics = {
   currency: string;
-  totals: { campaigns: number; liveCampaigns: number; approvedPosts: number; pendingPosts: number; rejectedPosts: number; views: number; spentKobo: number; fundedKobo: number; costPerThousandViewsKobo: number | null };
+  totals: { campaigns: number; liveCampaigns: number; approvedPosts: number; pendingPosts: number; rejectedPosts: number; views: number; spentKobo: number; fundedKobo: number; refundedKobo?: number; escrowKobo?: number; costPerThousandViewsKobo: number | null };
   byPlatform: Array<{ platform: string; label: string; posts: number; views: number; share: number; spentKobo: number; costPerThousandViewsKobo: number | null }>;
   byCampaign: Array<{ id: string; title: string; status: string; posts: number; targetPosts: number; submitted: number; flagged: number; views: number; spentKobo: number; fundedKobo: number; costPerThousandViewsKobo: number | null; platformViews: Record<string, number> }>;
   timeline: Array<{ date: string; views: number; posts: number }>;
@@ -22,6 +22,7 @@ type Turn = { role: "user" | "assistant"; text: string; highlights?: Array<{ lab
 // Validated for colour-vision deficiency; the two low-contrast slots always carry visible labels.
 const platformColor: Record<string, string> = { tiktok: "#2a78d6", instagram: "#eb6834", x: "#1baf7a", whatsapp: "#eda100" };
 const platformOrder = ["tiktok", "instagram", "x", "whatsapp"];
+const platformLabel: Record<string, string> = { tiktok: "TikTok", instagram: "Instagram", x: "X", whatsapp: "WhatsApp" };
 const brand = "#6558ff";
 const number = (value: number) => value.toLocaleString("en-US");
 const compact = (value: number) => new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 }).format(value);
@@ -49,7 +50,22 @@ export function BusinessAnalytics() {
         <Stat label="Auto-approved by AI" value={`${data.ai.autoApproved} of ${data.ai.reviewed}`} note={`${data.ai.highRisk} high-risk ${data.ai.highRisk === 1 ? "proof" : "proofs"} caught`} />
       </div>
       {empty ? <div className="rounded-2xl border border-dashed border-black/15 bg-white p-10 text-center text-sm text-black/50">Charts appear once promoters deliver verified posts on your live campaigns.</div> : <>
-        <PlatformShare rows={data.byPlatform} money={money} />
+        <div className="grid gap-6 lg:grid-cols-2">
+          <PieCard title="Where your views come from" subtitle="Share of verified views by platform" total={number(data.totals.views)} totalLabel="views"
+            slices={platformSlices(data.byPlatform, row => row.views)} format={value => `${number(value)} views`} />
+          <PieCard title="Where your money goes" subtitle="Rewards paid, by platform" total={money(data.totals.spentKobo)} totalLabel="paid"
+            slices={platformSlices(data.byPlatform, row => row.spentKobo)} format={value => money(value)} />
+        </div>
+        <div className="grid gap-6 lg:grid-cols-2">
+          <PieCard title="Your budget" subtitle="Everything you funded with PayPal" total={money(data.totals.fundedKobo)} totalLabel="funded"
+            slices={[
+              { key: "paid", label: "Paid out", value: data.totals.spentKobo, color: brand },
+              { key: "escrow", label: "In escrow", value: data.totals.escrowKobo ?? Math.max(0, data.totals.fundedKobo - data.totals.spentKobo), color: "#a59dff" },
+              { key: "refunded", label: "Refunded", value: data.totals.refundedKobo ?? 0, color: "#d6d2fb" },
+            ]} format={value => money(value)} />
+          <CostBars rows={data.byPlatform} money={money} />
+        </div>
+        <PlatformTable rows={data.byPlatform} money={money} />
         <CampaignBars rows={data.byCampaign} money={money} />
         <Timeline rows={data.timeline} />
       </>}
@@ -74,22 +90,78 @@ function Card({ title, subtitle, children }: { title: string; subtitle: string; 
   </section>;
 }
 
-function PlatformShare({ rows, money }: { rows: Analytics["byPlatform"]; money: (value: number | null) => string }) {
+type Slice = { key: string; label: string; value: number; color: string };
+const sortPlatforms = <T extends { platform: string }>(rows: T[]) => [...rows].sort((a, b) => platformOrder.indexOf(a.platform) - platformOrder.indexOf(b.platform));
+const platformSlices = (rows: Analytics["byPlatform"], value: (row: Analytics["byPlatform"][number]) => number): Slice[] =>
+  sortPlatforms(rows).map(row => ({ key: row.platform, label: row.label, value: value(row), color: platformColor[row.platform] ?? brand }));
+
+// Pie (ring) chart with the total in the middle and a legend that doubles as the data table.
+function PieCard({ title, subtitle, slices, total, totalLabel, format }: { title: string; subtitle: string; slices: Slice[]; total: string; totalLabel: string; format: (value: number) => string }) {
   const [hover, setHover] = useState<string | null>(null);
-  const sorted = [...rows].sort((a, b) => platformOrder.indexOf(a.platform) - platformOrder.indexOf(b.platform));
-  return <Card title="Where your views come from" subtitle="Share of verified views by platform">
-    <div className="flex h-11 w-full gap-[2px] overflow-hidden rounded-[4px]" role="img" aria-label={sorted.map(row => `${row.label} ${Math.round(row.share * 100)}%`).join(", ")}>
-      {sorted.map(row => <div key={row.platform} onMouseEnter={() => setHover(row.platform)} onMouseLeave={() => setHover(null)}
-        className="relative flex items-center justify-center transition-opacity" title={`${row.label}: ${number(row.views)} views (${Math.round(row.share * 100)}%)`}
-        style={{ width: `${row.share * 100}%`, background: platformColor[row.platform] ?? brand, opacity: hover && hover !== row.platform ? .45 : 1 }}>
-        {row.share >= .1 && <span className="text-xs font-black text-white [text-shadow:0_1px_2px_rgba(0,0,0,.35)]">{Math.round(row.share * 100)}%</span>}
+  const shown = slices.filter(slice => slice.value > 0); const sum = shown.reduce((acc, slice) => acc + slice.value, 0);
+  const size = 168, center = size / 2, outer = 80, inner = 52;
+  const point = (radius: number, turn: number) => [center + radius * Math.sin(turn * 2 * Math.PI), center - radius * Math.cos(turn * 2 * Math.PI)];
+  const shares = shown.map(slice => sum ? slice.value / sum : 0);
+  const arcs = shown.map((slice, index) => {
+    const share = shares[index]; const start = shares.slice(0, index).reduce((acc, value) => acc + value, 0); const end = start + share; const large = share > .5 ? 1 : 0;
+    const [x1, y1] = point(outer, start), [x2, y2] = point(outer, end), [x3, y3] = point(inner, end), [x4, y4] = point(inner, start);
+    const path = share >= .9999
+      ? `M ${center} ${center - outer} A ${outer} ${outer} 0 1 1 ${center - .01} ${center - outer} Z M ${center} ${center - inner} A ${inner} ${inner} 0 1 0 ${center - .01} ${center - inner} Z`
+      : `M ${x1} ${y1} A ${outer} ${outer} 0 ${large} 1 ${x2} ${y2} L ${x3} ${y3} A ${inner} ${inner} 0 ${large} 0 ${x4} ${y4} Z`;
+    return { ...slice, share, path };
+  });
+  const active = arcs.find(arc => arc.key === hover);
+  return <Card title={title} subtitle={subtitle}>
+    <div className="flex flex-col items-center gap-5">
+      <div className="relative shrink-0" style={{ width: size, height: size }}>
+        <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} role="img" aria-label={`${title}: ${arcs.map(arc => `${arc.label} ${Math.round(arc.share * 100)}%`).join(", ")}`}>
+          {!arcs.length && <circle cx={center} cy={center} r={(outer + inner) / 2} fill="none" stroke="#f1efe9" strokeWidth={outer - inner} />}
+          {arcs.map(arc => <path key={arc.key} d={arc.path} fill={arc.color} fillRule="evenodd" stroke="#fff" strokeWidth={2} strokeLinejoin="round"
+            onMouseEnter={() => setHover(arc.key)} onMouseLeave={() => setHover(null)}
+            style={{ opacity: hover && hover !== arc.key ? .4 : 1, transition: "opacity .15s" }}><title>{`${arc.label}: ${format(arc.value)} (${Math.round(arc.share * 100)}%)`}</title></path>)}
+        </svg>
+        <div className="pointer-events-none absolute inset-0 grid place-items-center text-center">
+          <div><p className="text-lg font-black leading-tight tabular-nums text-[#171811]">{active ? `${Math.round(active.share * 100)}%` : total}</p>
+            <p className="mt-0.5 max-w-[92px] text-[11px] leading-tight text-black/45">{active ? active.label : totalLabel}</p></div>
+        </div>
+      </div>
+      <ul className="w-full min-w-0 space-y-1">
+        {slices.map(slice => { const share = sum ? slice.value / sum : 0; return <li key={slice.key} onMouseEnter={() => setHover(slice.key)} onMouseLeave={() => setHover(null)}
+          className={`flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm ${hover === slice.key ? "bg-[#f6f5f0]" : ""}`}>
+          <span className="size-3 shrink-0 rounded-[3px]" style={{ background: slice.color }} />
+          <span className="min-w-0 flex-1 truncate font-semibold">{slice.label}</span>
+          <span className="shrink-0 tabular-nums text-black/45">{Math.round(share * 100)}%</span>
+          <span className="w-[86px] shrink-0 text-right font-bold tabular-nums">{format(slice.value)}</span>
+        </li>; })}
+      </ul>
+    </div>
+  </Card>;
+}
+
+// Horizontal bars: what each platform costs per 1,000 verified views. Shorter is better value.
+function CostBars({ rows, money }: { rows: Analytics["byPlatform"]; money: (value: number | null) => string }) {
+  const priced = sortPlatforms(rows).filter(row => row.costPerThousandViewsKobo != null);
+  const max = Math.max(1, ...priced.map(row => row.costPerThousandViewsKobo ?? 0));
+  const best = priced.reduce<typeof priced[number] | null>((low, row) => !low || (row.costPerThousandViewsKobo ?? 0) < (low.costPerThousandViewsKobo ?? 0) ? row : low, null);
+  return <Card title="Cost per 1,000 views" subtitle={best ? `${best.label} gives you the most views for your money` : "By platform"}>
+    <div className="space-y-3.5">
+      {priced.map(row => <div key={row.platform} className="grid grid-cols-[84px_minmax(0,1fr)_64px] items-center gap-3 text-sm" title={`${row.label}: ${money(row.costPerThousandViewsKobo)} per 1,000 views`}>
+        <span className="flex items-center gap-2 font-semibold"><span className="size-3 shrink-0 rounded-[3px]" style={{ background: platformColor[row.platform] ?? brand }} />{row.label}</span>
+        <div className="h-3 rounded-r-[4px] bg-[#f1efe9]"><div className="h-3 rounded-r-[4px]" style={{ width: `${((row.costPerThousandViewsKobo ?? 0) / max) * 100}%`, background: platformColor[row.platform] ?? brand }} /></div>
+        <span className="text-right font-bold tabular-nums">{money(row.costPerThousandViewsKobo)}</span>
       </div>)}
     </div>
-    <table className="mt-5 w-full text-sm">
-      <thead><tr className="text-left text-xs font-bold uppercase tracking-[.1em] text-black/40"><th className="pb-2 font-bold">Platform</th><th className="pb-2 text-right font-bold">Posts</th><th className="pb-2 text-right font-bold">Views</th><th className="pb-2 text-right font-bold">Share</th><th className="pb-2 text-right font-bold">Cost / 1k views</th></tr></thead>
-      <tbody>{sorted.map(row => <tr key={row.platform} onMouseEnter={() => setHover(row.platform)} onMouseLeave={() => setHover(null)} className={`border-t border-black/[.06] ${hover === row.platform ? "bg-[#f6f5f0]" : ""}`}>
+  </Card>;
+}
+
+function PlatformTable({ rows, money }: { rows: Analytics["byPlatform"]; money: (value: number | null) => string }) {
+  const sorted = sortPlatforms(rows);
+  return <Card title="Platform breakdown" subtitle="Verified posts, views and spend on each platform">
+    <table className="w-full text-sm">
+      <thead><tr className="text-left text-xs font-bold uppercase tracking-[.1em] text-black/40"><th className="pb-2 font-bold">Platform</th><th className="pb-2 text-right font-bold">Posts</th><th className="pb-2 text-right font-bold">Views</th><th className="hidden pb-2 text-right font-bold sm:table-cell">Share</th><th className="hidden pb-2 text-right font-bold sm:table-cell">Spent</th><th className="pb-2 text-right font-bold">Cost / 1k views</th></tr></thead>
+      <tbody>{sorted.map(row => <tr key={row.platform} className="border-t border-black/[.06] hover:bg-[#f6f5f0]">
         <td className="py-2.5"><span className="flex items-center gap-2 font-bold"><span className="size-3 rounded-[3px]" style={{ background: platformColor[row.platform] ?? brand }} />{row.label}</span></td>
-        <td className="py-2.5 text-right tabular-nums">{row.posts}</td><td className="py-2.5 text-right font-bold tabular-nums">{number(row.views)}</td><td className="py-2.5 text-right tabular-nums text-black/55">{Math.round(row.share * 100)}%</td><td className="py-2.5 text-right tabular-nums">{money(row.costPerThousandViewsKobo)}</td>
+        <td className="py-2.5 text-right tabular-nums">{row.posts}</td><td className="py-2.5 text-right font-bold tabular-nums">{number(row.views)}</td><td className="hidden py-2.5 text-right tabular-nums text-black/55 sm:table-cell">{Math.round(row.share * 100)}%</td><td className="hidden py-2.5 text-right tabular-nums sm:table-cell">{money(row.spentKobo)}</td><td className="py-2.5 text-right tabular-nums">{money(row.costPerThousandViewsKobo)}</td>
       </tr>)}</tbody>
     </table>
   </Card>;
@@ -97,15 +169,19 @@ function PlatformShare({ rows, money }: { rows: Analytics["byPlatform"]; money: 
 
 function CampaignBars({ rows, money }: { rows: Analytics["byCampaign"]; money: (value: number | null) => string }) {
   const max = Math.max(1, ...rows.map(row => row.views));
-  return <Card title="Campaign performance" subtitle="Verified views per campaign, with what each 1,000 views cost">
+  const used = platformOrder.filter(platform => rows.some(row => row.platformViews[platform]));
+  return <Card title="Campaign performance" subtitle="Verified views per campaign by platform, with what each 1,000 views cost">
+    <div className="-mt-1 mb-4 flex flex-wrap gap-x-4 gap-y-1 text-xs font-semibold text-black/55">{used.map(platform => <span key={platform} className="flex items-center gap-1.5"><span className="size-2.5 rounded-[3px]" style={{ background: platformColor[platform] }} />{platformLabel[platform]}</span>)}</div>
     <div className="space-y-4">
       {rows.map(row => <div key={row.id} className="group">
         <div className="flex items-baseline justify-between gap-3 text-sm">
           <p className="min-w-0 truncate font-bold">{row.title} <span className="ml-1 rounded-full bg-black/5 px-2 py-0.5 text-[11px] font-bold capitalize text-black/50">{row.status}</span></p>
           <p className="shrink-0 tabular-nums"><b>{number(row.views)}</b> <span className="text-black/45">views · {money(row.costPerThousandViewsKobo)} / 1k</span></p>
         </div>
-        <div className="mt-2 h-3 w-full rounded-r-[4px] bg-[#f1efe9]" title={`${row.title}: ${number(row.views)} views from ${row.posts} verified posts, ${money(row.spentKobo)} spent`}>
-          <div className="h-3 rounded-r-[4px] transition-[width] duration-700 group-hover:brightness-110" style={{ width: `${(row.views / max) * 100}%`, background: brand }} />
+        <div className="mt-2 flex h-3.5 w-full gap-[2px] overflow-hidden rounded-r-[4px] bg-[#f1efe9]">
+          {platformOrder.filter(platform => row.platformViews[platform]).map(platform => <div key={platform} className="h-full transition-[width] duration-700 last:rounded-r-[4px] hover:brightness-110"
+            title={`${row.title} · ${platformLabel[platform]}: ${number(row.platformViews[platform])} views`}
+            style={{ width: `${(row.platformViews[platform] / max) * 100}%`, background: platformColor[platform] }} />)}
         </div>
         <p className="mt-1.5 text-xs text-black/45">{row.posts} of {row.targetPosts} posts verified · {money(row.spentKobo)} spent{row.flagged ? ` · ${row.flagged} flagged` : ""}</p>
       </div>)}

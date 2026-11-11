@@ -36,13 +36,13 @@ export function assistantContext(businessName: string, analytics: BusinessAnalyt
   const money = (value: number | null) => formatMoney(value, analytics.currency);
   return {
     business: businessName, currency: analytics.currency,
-    totals: { ...analytics.totals, spent: money(analytics.totals.spentKobo), funded: money(analytics.totals.fundedKobo), costPerThousandViews: money(analytics.totals.costPerThousandViewsKobo), spentKobo: undefined, fundedKobo: undefined, costPerThousandViewsKobo: undefined },
+    totals: { ...analytics.totals, spent: money(analytics.totals.spentKobo), funded: money(analytics.totals.fundedKobo), costPerThousandViews: money(analytics.totals.costPerThousandViewsKobo), refundedToBusiness: money(analytics.totals.refundedKobo), stillInEscrow: money(analytics.totals.escrowKobo), spentKobo: undefined, fundedKobo: undefined, costPerThousandViewsKobo: undefined, refundedKobo: undefined, escrowKobo: undefined },
     viewsByPlatform: analytics.byPlatform.map(entry => ({ platform: entry.label, posts: entry.posts, views: entry.views, shareOfViews: `${Math.round(entry.share * 100)}%`, spent: money(entry.spentKobo), costPerThousandViews: money(entry.costPerThousandViewsKobo) })),
     campaigns: analytics.byCampaign.map(entry => {
       const brief = briefs.find(item => item.id === entry.id);
       return {
         title: entry.title, status: entry.status, verifiedPosts: `${entry.posts} of ${entry.targetPosts}`, proofsSubmitted: entry.submitted, flaggedOrRejected: entry.flagged,
-        views: entry.views, spent: money(entry.spentKobo), budget: money(entry.fundedKobo), costPerThousandViews: money(entry.costPerThousandViewsKobo),
+        views: entry.views, spent: money(entry.spentKobo), budget: money(entry.fundedKobo), refunded: money(entry.refundedKobo), costPerThousandViews: money(entry.costPerThousandViewsKobo),
         viewsByPlatform: entry.platformViews, rewardPerPost: brief ? money(brief.rewardKobo) : undefined, platforms: brief?.platforms, hashtag: brief?.hashtag, location: brief?.location,
       };
     }),

@@ -4,7 +4,7 @@
 
 export type AnalyticsCampaign = {
   id: string; title: string; status: string; currency: string;
-  unitPriceKobo: number; targetQuantity: number; fundedKobo: number; spentKobo: number; createdAt: Date;
+  unitPriceKobo: number; targetQuantity: number; fundedKobo: number; spentKobo: number; refundedKobo?: number; createdAt: Date;
 };
 export type AnalyticsProof = {
   campaignId: string; platform: string; status: string; createdAt: Date;
@@ -29,6 +29,9 @@ export function summarizeAnalytics(campaigns: AnalyticsCampaign[], proofs: Analy
   const totalViews = approved.reduce((sum, proof) => sum + verifiedViews(proof), 0);
   const spentKobo = campaigns.reduce((sum, campaign) => sum + campaign.spentKobo, 0);
   const fundedKobo = campaigns.reduce((sum, campaign) => sum + campaign.fundedKobo, 0);
+  const refundedKobo = campaigns.reduce((sum, campaign) => sum + (campaign.refundedKobo ?? 0), 0);
+  // Whatever was funded but is neither paid out nor refunded is still held in escrow.
+  const escrowKobo = Math.max(0, fundedKobo - spentKobo - refundedKobo);
 
   // Each approved post costs its campaign's reward, so spend can be split by platform too.
   const reward = new Map(campaigns.map(campaign => [campaign.id, campaign.unitPriceKobo]));
@@ -51,7 +54,7 @@ export function summarizeAnalytics(campaigns: AnalyticsCampaign[], proofs: Analy
       id: campaign.id, title: campaign.title, status: campaign.status, currency: campaign.currency,
       posts: ok.length, targetPosts: campaign.targetQuantity, submitted: own.length,
       flagged: own.filter(proof => proof.fraudRisk === 'high' || proof.status === 'rejected').length,
-      views, spentKobo: campaign.spentKobo, fundedKobo: campaign.fundedKobo,
+      views, spentKobo: campaign.spentKobo, fundedKobo: campaign.fundedKobo, refundedKobo: campaign.refundedKobo ?? 0,
       costPerThousandViewsKobo: perThousand(campaign.spentKobo, views), platformViews,
     };
   }).sort((a, b) => b.views - a.views);
@@ -67,7 +70,7 @@ export function summarizeAnalytics(campaigns: AnalyticsCampaign[], proofs: Analy
       campaigns: campaigns.length, liveCampaigns: campaigns.filter(campaign => campaign.status === 'live').length,
       approvedPosts: approved.length, pendingPosts: proofs.filter(proof => ['submitted', 'under_review'].includes(proof.status)).length,
       rejectedPosts: proofs.filter(proof => proof.status === 'rejected').length,
-      views: totalViews, spentKobo, fundedKobo, costPerThousandViewsKobo: perThousand(spentKobo, totalViews),
+      views: totalViews, spentKobo, fundedKobo, refundedKobo, escrowKobo, costPerThousandViewsKobo: perThousand(spentKobo, totalViews),
     },
     byPlatform, byCampaign, timeline,
     ai: {
