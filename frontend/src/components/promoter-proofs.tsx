@@ -95,7 +95,7 @@ export function PromoterProofs() {
           <input name="submittedUrl" type="url" required placeholder={linkPlaceholder[current]} className="mt-2 h-12 w-full rounded-xl border border-black/10 px-4 font-normal" />
         </label>}
         <label className="text-sm font-bold">Views you are claiming
-          <input name="claimedViews" type="number" min="0" defaultValue="0" className="mt-2 h-12 w-full rounded-xl border border-black/10 px-4 font-normal" />
+          <input name="claimedViews" type="number" min="0" inputMode="numeric" placeholder="e.g. 1840" className="mt-2 h-12 w-full rounded-xl border border-black/10 px-4 font-normal" />
         </label>
         <label className="text-sm font-bold">Screenshot of your views {!rules.screenshot && <span className="font-normal text-black/40">Optional</span>}
           <span className="mt-2 flex h-12 cursor-pointer items-center gap-2 rounded-xl border border-dashed border-black/15 px-4 text-sm font-medium">
